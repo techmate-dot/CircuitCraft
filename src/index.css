@@ -1,0 +1,80 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-background: #131316;
+  --color-surface: #131316;
+  --color-surface-container: #1f1f22;
+  --color-surface-container-low: #1b1b1e;
+  --color-surface-container-highest: #353438;
+  --color-primary-container: #0b0b0c;
+  
+  --color-secondary: #4ae176;
+  --color-secondary-fixed: #6bff8f;
+  --color-on-secondary: #003915;
+  
+  --color-tertiary: #4cd7f6;
+  --color-tertiary-fixed: #acedff;
+  
+  --color-error: #ffb4ab;
+  --color-on-error: #690005;
+  
+  --color-outline-variant: #46464a;
+  
+  --color-on-surface: #e4e1e6;
+  --color-on-surface-variant: #c7c6ca;
+
+  --font-sans: "Inter", sans-serif;
+  --font-display: "Geist", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  
+  --spacing-base: 4px;
+  --spacing-gutter: 1px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-panel-padding: 12px;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-on-surface);
+  font-family: var(--font-sans);
+}
+
+.dot-matrix {
+  background-image: radial-gradient(var(--color-surface-container) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+.schematic-bg {
+  background-image: 
+    linear-gradient(to right, var(--color-surface-container) 1px, transparent 1px), 
+    linear-gradient(to bottom, var(--color-surface-container) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-color: var(--color-primary-container);
+}
+
+.schematic-wire { stroke: var(--color-secondary); stroke-width: 2; fill: none; }
+.schematic-component { stroke: var(--color-on-surface); stroke-width: 1.5; fill: var(--color-surface); }
+.schematic-pin { fill: var(--color-on-surface-variant); }
+.schematic-text { fill: var(--color-on-surface-variant); font-family: var(--font-mono); font-size: 10px; }
+.active-wire { stroke: var(--color-tertiary); filter: drop-shadow(0 0 2px var(--color-tertiary)); }
+
+/* Custom scrollbar for webkit */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-background);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-container-highest);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-outline-variant);
+}
