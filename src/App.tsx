@@ -10,6 +10,7 @@ import LeftPanel from './components/LeftPanel';
 import CenterPanel from './components/CenterPanel';
 import RightPanel from './components/RightPanel';
 import type { NavTab, RightTab, CenterView } from './types';
+import { useCircuitStore } from './store';
 
 export default function App() {
   const [activeNav, setActiveNav] = useState<NavTab>('logic');
@@ -18,16 +19,19 @@ export default function App() {
   // Assistant pairs with the blocks canvas as it discusses generating blocks
   const [centerView, setCenterView] = useState<CenterView>('schematic');
 
-  // Synchronize some views for demonstration matching the images
+  const { plan } = useCircuitStore();
+
   useEffect(() => {
-    if (activeNav === 'logic') {
+    if (plan) {
+      setCenterView('plan');
+      setActiveRightTab('guide');
+    } else if (activeNav === 'logic') {
       setCenterView('schematic');
       setActiveRightTab('code');
     } else if (activeNav === 'assistant') {
       setCenterView('blocks');
-      setActiveRightTab('guide');
     }
-  }, [activeNav]);
+  }, [activeNav, plan]);
 
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-background selection:bg-secondary selection:text-on-secondary">

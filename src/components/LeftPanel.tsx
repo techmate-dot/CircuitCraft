@@ -1,11 +1,101 @@
+import { useState, useEffect } from 'react';
 import { Search, Puzzle, Archive, Bot, Send, MoreHorizontal, Wifi } from 'lucide-react';
 import type { NavTab } from '../types';
+import AssistantContent from './AssistantContent';
+import { useCircuitStore } from '../store';
+import { validateArchitecture } from '../data/components';
 
 interface LeftPanelProps {
   activeNav: NavTab;
 }
 
 export default function LeftPanel({ activeNav }: LeftPanelProps) {
+  const [inputText, setInputText] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const { addMessage, setIntent, setOptions, selectedOptionId, setValidation, setPlan } = useCircuitStore();
+
+  useEffect(() => {
+    const handleSelectOption = async (e: Event) => {
+      const { detail: option } = e as CustomEvent;
+      // 1. Run validation
+      const valResult = validateArchitecture(option);
+      setValidation(valResult);
+      addMessage({ role: 'assistant', content: 'Validation complete. Please review the results.', type: 'validation' });
+    };
+
+    const handleApprovePlan = async () => {
+      const optionId = useCircuitStore.getState().selectedOptionId;
+      const options = useCircuitStore.getState().options;
+      const option = options.find(o => o.id === optionId);
+      if (!option) return;
+
+      setIsLoading(true);
+      try {
+        const resPlan = await fetch('/api/plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ option })
+        });
+        const milestones = await resPlan.json();
+        setPlan({ milestones });
+        addMessage({ role: 'assistant', content: 'Here is your generated milestone plan. Check the Assembly Guide!', type: 'plan' });
+      } catch (e: any) {
+        addMessage({ role: 'assistant', content: `Error: ${e.message}` });
+      }
+      setIsLoading(false);
+    };
+
+    window.addEventListener('SELECT_OPTION', handleSelectOption);
+    window.addEventListener('APPROVE_PLAN', handleApprovePlan);
+    return () => {
+      window.removeEventListener('SELECT_OPTION', handleSelectOption);
+      window.removeEventListener('APPROVE_PLAN', handleApprovePlan);
+    };
+  }, []);
+
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!inputText.trim() || isLoading) return;
+
+    const text = inputText;
+    setInputText('');
+    addMessage({ role: 'user', content: text });
+    setIsLoading(true);
+
+    try {
+      // 1. Clarify
+      const resClarify = await fetch('/api/clarify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+      const intent = await resClarify.json();
+      setIntent(intent);
+
+      if (intent.missing_info && intent.missing_info.length > 0) {
+        addMessage({ role: 'assistant', content: `I can help with that! However, some details are missing:\n\n- ${intent.missing_info.join('\n- ')}\n\nI am assuming: ${intent.assumptions.join(', ')}. Is that okay? Or tell me more.`, type: 'text' });
+      } else {
+        addMessage({ role: 'assistant', content: `Great! I understand you want to build: ${intent.goal}. Let me prepare some options...`, type: 'text' });
+      }
+
+      // 2. Compare options
+      const resCompare = await fetch('/api/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intent })
+      });
+      const options = await resCompare.json();
+      setOptions(options);
+      
+      addMessage({ role: 'assistant', content: 'Here are two architecture options with different tradeoffs. Which one do you prefer?', type: 'options' });
+
+    } catch (e: any) {
+      addMessage({ role: 'assistant', content: `Error: ${e.message}` });
+    }
+    
+    setIsLoading(false);
+  };
+
   return (
     <div className="w-[24%] border-r border-outline-variant flex flex-col bg-surface min-w-[280px]">
       {/* Header */}
@@ -36,16 +126,19 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
       {/* Input area for Assistant */}
       {activeNav === 'assistant' && (
         <div className="p-panel-padding border-t border-outline-variant bg-surface">
-          <div className="relative flex items-center">
+          <form onSubmit={handleSubmit} className="relative flex items-center">
             <input 
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              disabled={isLoading}
               className="w-full bg-surface-container-low border border-outline-variant rounded px-md py-2 text-sm focus:outline-none focus:border-secondary transition-colors pr-xl" 
-              placeholder="Ask Copilot..." 
+              placeholder={isLoading ? "Thinking..." : "Ask Copilot..."} 
               type="text" 
             />
-            <button className="absolute right-2 text-on-surface-variant hover:text-secondary">
+            <button type="submit" disabled={isLoading} className="absolute right-2 text-on-surface-variant hover:text-secondary disabled:opacity-50">
               <Send size={16} />
             </button>
-          </div>
+          </form>
         </div>
       )}
 
@@ -123,38 +216,6 @@ function LogicContent() {
             <span className="font-mono text-[13px] text-secondary">to</span>
             <div className="bg-surface px-1 py-[2px] rounded border border-outline-variant text-[10px] text-on-surface">HIGH</div>
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AssistantContent() {
-  return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-1 text-on-surface-variant">
-          <Bot size={14} />
-          <span className="font-mono text-[10px] uppercase">AI Assistant</span>
-        </div>
-        <div className="bg-surface-container p-2 rounded border border-outline-variant/50 text-sm">
-          I see you're working on the ultrasonic distance sensor logic. Do you need help configuring the trig and echo pins for the HC-SR04P?
-        </div>
-      </div>
-      
-      <div className="flex flex-col gap-2 items-end">
-        <div className="bg-secondary/10 p-2 rounded border border-secondary/30 text-sm text-on-surface max-w-[90%]">
-          Yes, connect Trig to GPIO 5 and Echo to GPIO 18.
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-1 text-on-surface-variant">
-          <Bot size={14} />
-          <span className="font-mono text-[10px] uppercase">AI Assistant</span>
-        </div>
-        <div className="bg-surface-container p-2 rounded border border-outline-variant/50 text-sm">
-          Done. I've updated the pin mapping table and generated the initial Blockly blocks for reading distance.
         </div>
       </div>
     </div>

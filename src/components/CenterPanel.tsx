@@ -1,5 +1,8 @@
 import { Undo, Redo, ZoomIn, ZoomOut, MousePointer2, PlusCircle, Activity, Type, Download, Repeat, Wifi } from 'lucide-react';
 import type { CenterView } from '../types';
+import { useCircuitStore } from '../store';
+import ReactFlow, { Background, Controls, EdgeText } from 'reactflow';
+import 'reactflow/dist/style.css';
 
 interface CenterPanelProps {
   view: CenterView;
@@ -28,7 +31,7 @@ export default function CenterPanel({ view }: CenterPanelProps) {
       </div>
 
       {/* Canvas Container */}
-      {view === 'schematic' ? <SchematicCanvas /> : <BlocksCanvas />}
+      {view === 'schematic' ? <SchematicCanvas /> : view === 'blocks' ? <BlocksCanvas /> : <PlanCanvas />}
     </div>
   );
 }
@@ -156,6 +159,45 @@ function BlocksCanvas() {
           <div className="w-full h-4 border-l-2 border-tertiary/70"></div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function PlanCanvas() {
+  const { plan } = useCircuitStore();
+
+  if (!plan) return <div className="flex-1 flex items-center justify-center text-on-surface-variant">No plan available</div>;
+
+  const nodes = plan.milestones.map((m, i) => ({
+    id: m.id,
+    position: { x: 50, y: 50 + i * 150 },
+    data: { 
+      label: (
+        <div className="flex flex-col gap-1 p-2 w-[240px] text-left">
+           <div className="font-bold text-sm tracking-tight">{m.title}</div>
+           <div className="text-xs text-on-surface-variant">{m.description}</div>
+        </div>
+      )
+    },
+    style: { backgroundColor: 'oklch(var(--color-surface))', borderColor: 'oklch(var(--color-outline-variant))', borderRadius: 8, padding: 0 }
+  }));
+
+  const edges = plan.milestones
+    .filter(m => m.depends_on)
+    .map(m => ({
+      id: `e-${m.depends_on}-${m.id}`,
+      source: m.depends_on!,
+      target: m.id,
+      animated: true,
+      style: { stroke: 'oklch(var(--color-secondary))' }
+    }));
+
+  return (
+    <div className="flex-1 w-full h-full schematic-bg relative">
+       <ReactFlow nodes={nodes} edges={edges} fitView>
+         <Background color="oklch(var(--color-outline-variant))" gap={24} />
+         <Controls />
+       </ReactFlow>
     </div>
   );
 }

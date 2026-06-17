@@ -1,5 +1,6 @@
 import { Copy, Cpu, Info } from 'lucide-react';
 import type { RightTab } from '../types';
+import Editor from '@monaco-editor/react';
 
 interface RightPanelProps {
   activeTab: RightTab;
@@ -92,72 +93,35 @@ export default function RightPanel({ activeTab, setActiveTab }: RightPanelProps)
 }
 
 function CodeView() {
+  const code = `// Validated Hardware Setup
+#include <Arduino.h>
+
+void setup() {
+  Serial.begin(115200);
+  // Auto-generated pin assignments based on validated options
+}
+
+void loop() {
+  // Logic from blockly diagram
+}`;
+
   return (
-    <>
-      <pre className="font-mono text-[13px] leading-[20px] text-on-surface-variant">
-        <code>
-          <span className="text-[#c678dd]">#include</span> <span className="text-[#98c379]">&lt;Arduino.h&gt;</span>
-          {'\n\n'}
-          <span className="text-[#5c6370] italic">// Pin Definitions</span>{'\n'}
-          <span className="text-[#c678dd]">const</span> <span className="text-[#e5c07b]">int</span> <span className="text-[#e06c75]">TRIG_PIN</span> <span className="text-[#56b6c2]">=</span> <span className="text-[#d19a66]">5</span>;{'\n'}
-          <span className="text-[#c678dd]">const</span> <span className="text-[#e5c07b]">int</span> <span className="text-[#e06c75]">ECHO_PIN</span> <span className="text-[#56b6c2]">=</span> <span className="text-[#d19a66]">18</span>;{'\n'}
-          {'\n'}
-          <span className="text-[#5c6370] italic">// Variables</span>{'\n'}
-          <span className="text-[#e5c07b]">long</span> duration;{'\n'}
-          <span className="text-[#e5c07b]">float</span> distanceCm;{'\n'}
-          {'\n'}
-          <span className="text-[#c678dd]">void</span> <span className="text-[#61afef]">setup</span>() {'{'}{'\n'}
-          {'  '}
-          <span className="text-[#e5c07b]">Serial</span>.<span className="text-[#56b6c2]">begin</span>(<span className="text-[#d19a66]">115200</span>);{'\n'}
-          {'  '}
-          <span className="text-[#56b6c2]">pinMode</span>(TRIG_PIN, <span className="text-[#d19a66]">OUTPUT</span>);{'\n'}
-          {'  '}
-          <span className="text-[#56b6c2]">pinMode</span>(ECHO_PIN, <span className="text-[#d19a66]">INPUT</span>);{'\n'}
-          {'}'}{'\n'}
-          {'\n'}
-          <span className="text-[#c678dd]">void</span> <span className="text-[#61afef]">loop</span>() {'{'}{'\n'}
-          {'  '}
-          <span className="text-[#5c6370] italic">// Clear trig</span>{'\n'}
-          {'  '}
-          <span className="text-[#56b6c2]">digitalWrite</span>(TRIG_PIN, <span className="text-[#d19a66]">LOW</span>);{'\n'}
-          {'  '}
-          <span className="text-[#56b6c2]">delayMicroseconds</span>(<span className="text-[#d19a66]">2</span>);{'\n'}
-          {'  \n'}
-          {'  '}
-          <span className="text-[#5c6370] italic">// Trigger sensor</span>{'\n'}
-          {'  '}
-          <span className="text-[#56b6c2]">digitalWrite</span>(TRIG_PIN, <span className="text-[#d19a66]">HIGH</span>);{'\n'}
-          {'  '}
-          <span className="text-[#56b6c2]">delayMicroseconds</span>(<span className="text-[#d19a66]">10</span>);{'\n'}
-          {'  '}
-          <span className="text-[#56b6c2]">digitalWrite</span>(TRIG_PIN, <span className="text-[#d19a66]">LOW</span>);{'\n'}
-          {'  \n'}
-          {'  '}
-          <span className="text-[#5c6370] italic">// Read echo</span>{'\n'}
-          {'  '}
-          duration <span className="text-[#56b6c2]">=</span> <span className="text-[#56b6c2]">pulseIn</span>(ECHO_PIN, <span className="text-[#d19a66]">HIGH</span>);{'\n'}
-          {'  \n'}
-          {'  '}
-          <span className="text-[#5c6370] italic">// Calculate distance</span>{'\n'}
-          {'  '}
-          distanceCm <span className="text-[#56b6c2]">=</span> duration <span className="text-[#56b6c2]">*</span> <span className="text-[#d19a66]">0.034</span> <span className="text-[#56b6c2]">/</span> <span className="text-[#d19a66]">2</span>;{'\n'}
-          {'  \n'}
-          {'  '}
-          <span className="text-[#e5c07b]">Serial</span>.<span className="text-[#56b6c2]">print</span>(<span className="text-[#98c379]">"Distance: "</span>);{'\n'}
-          {'  '}
-          <span className="text-[#e5c07b]">Serial</span>.<span className="text-[#56b6c2]">print</span>(distanceCm);{'\n'}
-          {'  '}
-          <span className="text-[#e5c07b]">Serial</span>.<span className="text-[#56b6c2]">println</span>(<span className="text-[#98c379]">" cm"</span>);{'\n'}
-          {'  \n'}
-          {'  '}
-          <span className="text-[#56b6c2]">delay</span>(<span className="text-[#d19a66]">100</span>);{'\n'}
-          {'}'}
-        </code>
-      </pre>
-      <button className="absolute top-4 right-4 p-1 bg-surface border border-outline-variant rounded text-on-surface-variant hover:text-on-surface transition-colors" title="Copy Code">
+    <div className="absolute inset-0">
+      <Editor
+        height="100%"
+        defaultLanguage="cpp"
+        theme="vs-dark"
+        options={{
+          minimap: { enabled: false },
+          fontSize: 13,
+          fontFamily: 'JetBrains Mono, monospace',
+        }}
+        value={code}
+      />
+      <button className="absolute top-4 right-6 p-2 bg-surface border border-outline-variant rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors shadow-lg z-10" title="Copy Code">
         <Copy size={16} />
       </button>
-    </>
+    </div>
   );
 }
 
