@@ -460,27 +460,12 @@ function BlocksCanvas() {
     ? swapSimulation.simulatedOption
     : options.find(o => o.id === selectedOptionId);
 
-  if (!selectedOption) {
-    return (
-      <div className="flex-1 dot-matrix w-full h-full relative flex flex-col items-center justify-center gap-3 text-center p-8">
-        <div className="flex flex-col gap-2 items-center text-on-surface-variant">
-          <div className="w-10 h-10 rounded-full border-2 border-dashed border-outline-variant flex items-center justify-center">
-            <PlusCircle size={20} className="opacity-40" />
-          </div>
-          <span className="font-mono text-[11px] uppercase tracking-wider opacity-60">
-            Select an architecture option in the Copilot to populate blocks
-          </span>
-        </div>
-      </div>
-    );
-  }
-
   const confidence = validation?.confidence ?? 'verify_manually';
   const blocklyRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<any>(null);
 
   useEffect(() => {
-    if (!blocklyRef.current) return;
+    if (!selectedOption || !blocklyRef.current) return;
 
     registerCustomBlocks();
 
@@ -655,6 +640,21 @@ function BlocksCanvas() {
       workspace.dispose();
     };
   }, [selectedOptionId, swapSimulation.active, swapSimulation.simulatedOption?.components]);
+
+  if (!selectedOption) {
+    return (
+      <div className="flex-1 dot-matrix w-full h-full relative flex flex-col items-center justify-center gap-3 text-center p-8">
+        <div className="flex flex-col gap-2 items-center text-on-surface-variant">
+          <div className="w-10 h-10 rounded-full border-2 border-dashed border-outline-variant flex items-center justify-center">
+            <PlusCircle size={20} className="opacity-40" />
+          </div>
+          <span className="font-mono text-[11px] uppercase tracking-wider opacity-60">
+            Select an architecture option in the Copilot to populate blocks
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 dot-matrix w-full h-full relative overflow-hidden">
