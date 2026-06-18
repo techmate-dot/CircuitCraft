@@ -13,25 +13,29 @@ import type { NavTab, RightTab, CenterView } from './types';
 import { useCircuitStore } from './store';
 
 export default function App() {
-  const [activeNav, setActiveNav] = useState<NavTab>('logic');
+  const [activeNav, setActiveNav] = useState<NavTab>('assistant');
   const [activeRightTab, setActiveRightTab] = useState<RightTab>('code');
-  // Logic tab naturally pairs with schematic in this design sequence, 
-  // Assistant pairs with the blocks canvas as it discusses generating blocks
-  const [centerView, setCenterView] = useState<CenterView>('schematic');
+  const [centerView, setCenterView] = useState<CenterView>('blocks');
 
-  const { plan } = useCircuitStore();
+  const { plan, selectedOptionId, approved } = useCircuitStore();
 
   useEffect(() => {
     if (plan) {
+      // Plan just arrived → show the plan node graph; right panel shows assembly guide
       setCenterView('plan');
       setActiveRightTab('guide');
-    } else if (activeNav === 'logic') {
-      setCenterView('schematic');
+    } else if (selectedOptionId && !plan) {
+      // Option selected, no plan yet → show blocks canvas (with pending overlay) + code tab
+      setCenterView('blocks');
       setActiveRightTab('code');
-    } else if (activeNav === 'assistant') {
+    } else if (activeNav === 'logic') {
+      setCenterView('blocks');
+      setActiveRightTab('code');
+    } else if (activeNav === 'assistant' && !selectedOptionId) {
       setCenterView('blocks');
     }
-  }, [activeNav, plan]);
+    // When approved changes, no view switch needed — overlays just disappear
+  }, [activeNav, plan, selectedOptionId, approved]);
 
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-background selection:bg-secondary selection:text-on-secondary">
@@ -47,4 +51,3 @@ export default function App() {
     </div>
   );
 }
-

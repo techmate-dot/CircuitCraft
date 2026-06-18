@@ -1,90 +1,117 @@
-import { Copy, Cpu, Info } from 'lucide-react';
+import { Copy, Cpu, ShieldCheck, ShieldAlert, CheckCircle2, Lock } from 'lucide-react';
 import type { RightTab } from '../types';
 import Editor from '@monaco-editor/react';
+import { useCircuitStore } from '../store';
+import { resolvePinAssignments } from '../lib/pinMapper';
+import { generateArduinoCode } from '../lib/codeGen';
+import { useState } from 'react';
 
 interface RightPanelProps {
   activeTab: RightTab;
   setActiveTab: (tab: RightTab) => void;
 }
 
+// ─── Confidence badge ─────────────────────────────────────────────────────────
+function ConfidenceBadge({ confidence }: { confidence: 'validated' | 'verify_manually' }) {
+  if (confidence === 'validated') {
+    return (
+      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-secondary/15 border border-secondary/30 text-secondary">
+        <ShieldCheck size={10} />
+        <span className="font-mono text-[9px] font-medium tracking-wide uppercase">Validated</span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-tertiary/15 border border-tertiary/30 text-tertiary animate-pulse">
+      <ShieldAlert size={10} />
+      <span className="font-mono text-[9px] font-medium tracking-wide uppercase">Verify Manually</span>
+    </div>
+  );
+}
+
+// ─── Module H: Pending-Review overlay (code panel) ───────────────────────────
+function PendingReviewOverlay() {
+  return (
+    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-surface/80 backdrop-blur-sm">
+      <div className="flex flex-col items-center gap-3 p-5 bg-surface border border-outline-variant rounded-xl shadow-xl max-w-[220px] text-center">
+        <Lock size={18} className="text-tertiary" />
+        <div className="flex flex-col gap-1">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-tertiary font-bold">Pending Review</span>
+          <span className="text-xs text-on-surface-variant leading-snug">
+            Approve the architecture in the Copilot to unlock this panel.
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function RightPanel({ activeTab, setActiveTab }: RightPanelProps) {
+  const { options, selectedOptionId, validation, approved, generatedCode } = useCircuitStore();
+  const selectedOption = options.find(o => o.id === selectedOptionId);
+  const assignments = selectedOption ? resolvePinAssignments(selectedOption) : [];
+  const confidence = validation?.confidence ?? 'verify_manually';
+
   return (
     <div className="w-[30%] border-l border-outline-variant flex flex-col bg-surface min-w-[320px]">
-      {/* Tabbed View Header */}
+      {/* Tabbed Header */}
       <div className="h-12 border-b border-outline-variant flex items-end px-2 shrink-0 bg-surface-container-low gap-2">
-        <button 
-          onClick={() => setActiveTab('code')}
-          className={`px-4 py-2 border-b-2 font-mono text-[11px] font-medium tracking-[0.05em] uppercase transition-colors rounded-t ${
-            activeTab === 'code' 
-              ? 'border-secondary text-secondary bg-surface' 
-              : 'border-transparent text-on-surface-variant hover:text-on-surface'
-          }`}
-        >
-          C++ Code
-        </button>
-        <button 
-          onClick={() => setActiveTab('mapping')}
-          className={`px-4 py-2 border-b-2 font-mono text-[11px] font-medium tracking-[0.05em] uppercase transition-colors rounded-t ${
-            activeTab === 'mapping' 
-              ? 'border-secondary text-secondary bg-surface' 
-              : 'border-transparent text-on-surface-variant hover:text-on-surface'
-          }`}
-        >
-          Pin Mapping
-        </button>
-        <button 
-          onClick={() => setActiveTab('guide')}
-          className={`px-4 py-2 border-b-2 font-mono text-[11px] font-medium tracking-[0.05em] uppercase transition-colors rounded-t ${
-            activeTab === 'guide' 
-              ? 'border-secondary text-secondary bg-surface' 
-              : 'border-transparent text-on-surface-variant hover:text-on-surface'
-          }`}
-        >
-          Assembly Guide
-        </button>
+        {(['code', 'mapping', 'guide'] as RightTab[]).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`px-4 py-2 border-b-2 font-mono text-[11px] font-medium tracking-[0.05em] uppercase transition-colors rounded-t ${
+              activeTab === tab
+                ? 'border-secondary text-secondary bg-surface'
+                : 'border-transparent text-on-surface-variant hover:text-on-surface'
+            }`}
+          >
+            {tab === 'code' ? 'C++ Code' : tab === 'mapping' ? 'Pin Mapping' : 'Assembly Guide'}
+          </button>
+        ))}
       </div>
 
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto bg-surface p-4 relative">
-        {activeTab === 'code' && <CodeView />}
-        {activeTab === 'guide' && <AssemblyGuideView />}
-        {activeTab === 'mapping' && <PinMappingExpandedView />}
+        {activeTab === 'code'    && <CodeView assignments={assignments} option={selectedOption} confidence={confidence} approved={approved} generatedCode={generatedCode} />}
+        {activeTab === 'guide'   && <AssemblyGuideView assignments={assignments} confidence={confidence} approved={approved} />}
+        {activeTab === 'mapping' && <PinMappingExpandedView assignments={assignments} confidence={confidence} />}
       </div>
 
       {/* Persistent Pin Mapping Bottom Table */}
       {(activeTab === 'code' || activeTab === 'guide') && (
-        <div className="h-1/3 border-t border-outline-variant bg-surface flex flex-col shrink-0 min-h-[200px]">
+        <div className="h-1/3 border-t border-outline-variant bg-surface flex flex-col shrink-0 min-h-[180px]">
           <div className="p-2 border-b border-outline-variant flex items-center justify-between bg-surface-container-low">
             <span className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase text-on-surface-variant">Active Pins</span>
-            <Cpu size={16} className="text-on-surface-variant" />
+            <div className="flex items-center gap-2">
+              {selectedOption && <ConfidenceBadge confidence={confidence} />}
+              {approved && <CheckCircle2 size={12} className="text-secondary" />}
+              <Cpu size={16} className="text-on-surface-variant" />
+            </div>
           </div>
           <div className="overflow-y-auto p-panel-padding">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-outline-variant">
-                  <th className="font-mono text-[11px] uppercase tracking-[0.05em] text-on-surface-variant pb-1 font-normal">Component</th>
-                  <th className="font-mono text-[11px] uppercase tracking-[0.05em] text-on-surface-variant pb-1 font-normal">Pin</th>
-                  <th className="font-mono text-[11px] uppercase tracking-[0.05em] text-on-surface-variant pb-1 font-normal">GPIO</th>
-                </tr>
-              </thead>
-              <tbody className="font-mono text-[13px] text-on-surface">
-                <tr className="border-b border-outline-variant/50 hover:bg-surface-container transition-colors">
-                  <td className="py-2">HC-SR04P (Trig)</td>
-                  <td className="py-2 text-tertiary">D5</td>
-                  <td className="py-2 text-on-surface-variant">GPIO 5</td>
-                </tr>
-                <tr className="border-b border-outline-variant/50 hover:bg-surface-container transition-colors">
-                  <td className="py-2">HC-SR04P (Echo)</td>
-                  <td className="py-2 text-tertiary">D18</td>
-                  <td className="py-2 text-on-surface-variant">GPIO 18</td>
-                </tr>
-                <tr className="hover:bg-surface-container transition-colors">
-                  <td className="py-2">Power</td>
-                  <td className="py-2 text-error">VIN</td>
-                  <td className="py-2 text-on-surface-variant">5V</td>
-                </tr>
-              </tbody>
-            </table>
+            {assignments.length === 0 ? (
+              <p className="text-xs text-on-surface-variant italic py-2">Select an architecture option to see pin assignments.</p>
+            ) : (
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-outline-variant">
+                    <th className="font-mono text-[11px] uppercase tracking-[0.05em] text-on-surface-variant pb-1 font-normal">Component</th>
+                    <th className="font-mono text-[11px] uppercase tracking-[0.05em] text-on-surface-variant pb-1 font-normal">Pin</th>
+                    <th className="font-mono text-[11px] uppercase tracking-[0.05em] text-on-surface-variant pb-1 font-normal">Type</th>
+                  </tr>
+                </thead>
+                <tbody className="font-mono text-[13px] text-on-surface">
+                  {assignments.map((a, i) => (
+                    <tr key={i} className="border-b border-outline-variant/50 hover:bg-surface-container transition-colors">
+                      <td className="py-1.5">{a.component}</td>
+                      <td className={`py-1.5 ${a.pin === 'UNASSIGNED' ? 'text-error' : 'text-tertiary'}`}>{a.pin}</td>
+                      <td className="py-1.5 text-on-surface-variant text-[11px]">{a.pinType.toUpperCase()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       )}
@@ -92,145 +119,203 @@ export default function RightPanel({ activeTab, setActiveTab }: RightPanelProps)
   );
 }
 
-function CodeView() {
-  const code = `// Validated Hardware Setup
-#include <Arduino.h>
+// ─── Code View — Monaco with generated Arduino C++ (Module H: locked until approved) ──
+function CodeView({
+  assignments,
+  option,
+  confidence,
+  approved,
+  generatedCode,
+}: {
+  assignments: ReturnType<typeof resolvePinAssignments>;
+  option: any;
+  confidence: 'validated' | 'verify_manually';
+  approved: boolean;
+  generatedCode: string | null;
+}) {
+  const [copied, setCopied] = useState(false);
 
-void setup() {
-  Serial.begin(115200);
-  // Auto-generated pin assignments based on validated options
-}
+  const code = generatedCode
+    ? generatedCode
+    : (option
+      ? generateArduinoCode(assignments, option.label, confidence)
+      : `// Select an architecture option in the Copilot panel to generate code.\n// Pin numbers are validated against the component spec table before appearing here.`);
 
-void loop() {
-  // Logic from blockly diagram
-}`;
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
+  };
 
   return (
-    <div className="absolute inset-0">
-      <Editor
-        height="100%"
-        defaultLanguage="cpp"
-        theme="vs-dark"
-        options={{
-          minimap: { enabled: false },
-          fontSize: 13,
-          fontFamily: 'JetBrains Mono, monospace',
-        }}
-        value={code}
-      />
-      <button className="absolute top-4 right-6 p-2 bg-surface border border-outline-variant rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors shadow-lg z-10" title="Copy Code">
-        <Copy size={16} />
-      </button>
+    <div className="absolute inset-0 flex flex-col">
+      {/* Code header */}
+      <div className="shrink-0 flex items-center justify-between px-4 py-2 bg-surface border-b border-outline-variant/40">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-on-surface-variant">
+            Arduino C++ · Milestone 1
+          </span>
+          {option && <ConfidenceBadge confidence={confidence} />}
+          {approved && (
+            <div className="flex items-center gap-1 text-secondary">
+              <CheckCircle2 size={11} />
+              <span className="font-mono text-[9px] uppercase tracking-wider">Approved</span>
+            </div>
+          )}
+        </div>
+        <button
+          onClick={handleCopy}
+          disabled={!approved}
+          className="flex items-center gap-1.5 p-1.5 text-on-surface-variant hover:text-secondary hover:bg-surface-container rounded transition-colors disabled:opacity-30"
+          title={approved ? 'Copy Code' : 'Approve to unlock'}
+        >
+          {copied ? <CheckCircle2 size={14} className="text-secondary" /> : <Copy size={14} />}
+          <span className="font-mono text-[10px]">{copied ? 'Copied!' : 'Copy'}</span>
+        </button>
+      </div>
+
+      {/* verify_manually overlay banner (only after approval) */}
+      {approved && confidence === 'verify_manually' && option && (
+        <div className="shrink-0 flex items-center gap-2 px-3 py-2 bg-tertiary/8 border-b border-tertiary/20">
+          <ShieldAlert size={12} className="text-tertiary shrink-0" />
+          <span className="text-[11px] text-tertiary font-mono">
+            Warnings acknowledged — review before flashing to hardware
+          </span>
+        </div>
+      )}
+
+      {/* Monaco editor */}
+      <div className="flex-1 relative">
+        <Editor
+          height="100%"
+          defaultLanguage="cpp"
+          theme="vs-dark"
+          options={{
+            minimap: { enabled: false },
+            fontSize: 12,
+            fontFamily: 'JetBrains Mono, monospace',
+            readOnly: true,
+            scrollBeyondLastLine: false,
+            wordWrap: 'on',
+          }}
+          value={code}
+        />
+        {/* Module H: overlay until approved */}
+        {!approved && option && <PendingReviewOverlay />}
+      </div>
     </div>
   );
 }
 
-function AssemblyGuideView() {
+// ─── Assembly Guide View ──────────────────────────────────────────────────────
+function AssemblyGuideView({
+  assignments,
+  confidence,
+  approved,
+}: {
+  assignments: ReturnType<typeof resolvePinAssignments>;
+  confidence: 'validated' | 'verify_manually';
+  approved: boolean;
+}) {
+  if (assignments.length === 0) {
+    return (
+      <div className="flex flex-col gap-2 text-sm text-on-surface-variant italic">
+        Select an architecture option to generate the assembly guide.
+      </div>
+    );
+  }
+
+  if (!approved) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+        <Lock size={20} className="text-tertiary" />
+        <div className="flex flex-col gap-1">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-tertiary font-bold">Pending Review</span>
+          <span className="text-sm text-on-surface-variant">
+            Approve the architecture in the Copilot to unlock the assembly guide.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h2 className="font-display text-[18px] font-medium text-on-surface">Ultrasonic Integration Guide</h2>
-        <p className="text-sm text-on-surface-variant">Follow these steps to wire the HC-SR04P sensor to your ESP32 DevKit.</p>
+        <div className="flex items-center justify-between">
+          <h2 className="font-display text-[18px] font-medium text-on-surface">Wiring Guide — Milestone 1</h2>
+          <ConfidenceBadge confidence={confidence} />
+        </div>
+        <p className="text-sm text-on-surface-variant">Step-by-step wiring for each validated component.</p>
       </div>
 
       <div className="flex flex-col gap-4">
-        {/* Step 1 */}
-        <div className="flex items-start gap-4 p-4 bg-surface-container rounded border border-outline-variant">
-          <div className="flex items-center justify-center w-6 h-6 rounded bg-secondary text-on-secondary font-bold text-[12px] shrink-0">1</div>
-          <div className="flex-1 flex flex-col gap-1">
-            <span className="font-bold text-on-surface text-sm">VCC/GND Routing</span>
-            <span className="text-sm text-on-surface-variant">Connect VCC to 5V (VIN) and GND to any GND pin on the ESP32.</span>
-            <div className="flex items-center gap-2 mt-1">
-              <input type="checkbox" checked readOnly className="rounded border-outline-variant bg-surface text-secondary focus:ring-0 accent-secondary w-4 h-4" />
-              <span className="text-[11px] font-mono text-secondary">Completed</span>
+        {assignments.map((a, i) => (
+          <div key={i} className="flex items-start gap-4 p-4 bg-surface-container rounded border border-outline-variant">
+            <div className="flex items-center justify-center w-6 h-6 rounded bg-secondary text-on-secondary font-bold text-[12px] shrink-0">{i + 1}</div>
+            <div className="flex-1 flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-on-surface text-sm">{a.component}</span>
+                <span className="font-mono text-[9px] px-1.5 py-0.5 rounded border border-outline-variant bg-surface text-on-surface-variant uppercase">{a.pinType}</span>
+              </div>
+              {a.pin === 'UNASSIGNED' ? (
+                <span className="text-sm text-error">⚠ No pin could be assigned — board may be out of {a.pinType} pins.</span>
+              ) : (
+                <span className="text-sm text-on-surface-variant">
+                  Connect {a.component} signal to <span className="font-mono text-tertiary font-bold">{a.pin}</span> ({a.role}).
+                  {a.pinType === 'i2c' && ' Also connect SDA to GPIO21 and SCL to GPIO22 for I2C.'}
+                </span>
+              )}
             </div>
           </div>
-        </div>
-
-        {/* Step 2 */}
-        <div className="flex items-start gap-4 p-4 bg-surface-container rounded border border-outline-variant">
-          <div className="flex items-center justify-center w-6 h-6 rounded bg-outline-variant text-on-surface-variant font-bold text-[12px] shrink-0">2</div>
-          <div className="flex-1 flex flex-col gap-1">
-            <span className="font-bold text-on-surface text-sm">Signal Pins</span>
-            <span className="text-sm text-on-surface-variant">Connect Trig to GPIO 5 and Echo to GPIO 18.</span>
-            <div className="flex items-center gap-2 mt-1">
-              <input type="checkbox" className="rounded border-outline-variant bg-surface text-secondary focus:ring-0 accent-secondary w-4 h-4 cursor-pointer" />
-              <span className="text-[11px] font-mono text-on-surface-variant">Mark as done</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Pinout info */}
-      <div className="p-4 border border-tertiary/30 bg-tertiary/5 rounded flex flex-col gap-2">
-        <div className="flex items-center gap-2 text-tertiary mb-2">
-          <Info size={18} />
-          <span className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase">HC-SR04 Pinout</span>
-        </div>
-        <div className="grid grid-cols-2 gap-4 text-[11px] font-mono">
-          <div className="flex justify-between border-b border-outline-variant/30 pb-1">
-            <span className="text-on-surface-variant">VCC</span>
-            <span className="text-on-surface">5V</span>
-          </div>
-          <div className="flex justify-between border-b border-outline-variant/30 pb-1">
-            <span className="text-on-surface-variant">Trig</span>
-            <span className="text-on-surface">Input</span>
-          </div>
-          <div className="flex justify-between border-b border-outline-variant/30 pb-1">
-            <span className="text-on-surface-variant">Echo</span>
-            <span className="text-on-surface">Output</span>
-          </div>
-          <div className="flex justify-between border-b border-outline-variant/30 pb-1">
-            <span className="text-on-surface-variant">GND</span>
-            <span className="text-on-surface">0V</span>
-          </div>
-        </div>
+        ))}
       </div>
     </div>
   );
 }
 
-function PinMappingExpandedView() {
+// ─── Pin Mapping Expanded View ────────────────────────────────────────────────
+function PinMappingExpandedView({
+  assignments,
+  confidence,
+}: {
+  assignments: ReturnType<typeof resolvePinAssignments>;
+  confidence: 'validated' | 'verify_manually';
+}) {
   return (
     <div className="flex flex-col gap-4">
-       <h2 className="font-display text-[18px] font-medium text-on-surface mb-2">Complete Pin Mapping</h2>
-       <p className="text-sm text-on-surface-variant mb-4">A comprehensive list of all assigned pins for the current project configuration.</p>
-       <table className="w-full text-left border-collapse">
-        <thead>
-          <tr className="border-b border-outline-variant">
-            <th className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase text-on-surface-variant pb-2">Component</th>
-            <th className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase text-on-surface-variant pb-2">Pin</th>
-            <th className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase text-on-surface-variant pb-2">GPIO</th>
-            <th className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase text-on-surface-variant pb-2">Type</th>
-          </tr>
-        </thead>
-        <tbody className="font-mono text-[13px] text-on-surface">
-          <tr className="border-b border-outline-variant/50 hover:bg-surface-container transition-colors">
-            <td className="py-3">HC-SR04P (Trig)</td>
-            <td className="py-3 text-tertiary">D5</td>
-            <td className="py-3 text-on-surface-variant">GPIO 5</td>
-            <td className="py-3 text-on-surface-variant">Digital Output</td>
-          </tr>
-          <tr className="border-b border-outline-variant/50 hover:bg-surface-container transition-colors">
-            <td className="py-3">HC-SR04P (Echo)</td>
-            <td className="py-3 text-tertiary">D18</td>
-            <td className="py-3 text-on-surface-variant">GPIO 18</td>
-            <td className="py-3 text-on-surface-variant">Digital Input</td>
-          </tr>
-          <tr className="border-b border-outline-variant/50 hover:bg-surface-container transition-colors">
-            <td className="py-3">Built-in LED</td>
-            <td className="py-3 text-tertiary">D2</td>
-            <td className="py-3 text-on-surface-variant">GPIO 2</td>
-            <td className="py-3 text-on-surface-variant">Digital Output</td>
-          </tr>
-          <tr className="hover:bg-surface-container transition-colors">
-            <td className="py-3">Power</td>
-            <td className="py-3 text-error">VIN</td>
-            <td className="py-3 text-on-surface-variant">5V</td>
-            <td className="py-3 text-on-surface-variant">Power Supply</td>
-          </tr>
-        </tbody>
-      </table>
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-[18px] font-medium text-on-surface">Complete Pin Mapping</h2>
+        <ConfidenceBadge confidence={confidence} />
+      </div>
+      <p className="text-sm text-on-surface-variant">
+        {assignments.length === 0
+          ? 'Select an architecture option in the Copilot to populate the pin map.'
+          : 'All assigned pins for the current validated configuration. Pin numbers are derived from the component spec table — never from raw LLM output.'}
+      </p>
+
+      {assignments.length > 0 && (
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="border-b border-outline-variant">
+              <th className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase text-on-surface-variant pb-2">Component</th>
+              <th className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase text-on-surface-variant pb-2">Pin</th>
+              <th className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase text-on-surface-variant pb-2">Type</th>
+              <th className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase text-on-surface-variant pb-2">Role</th>
+            </tr>
+          </thead>
+          <tbody className="font-mono text-[13px] text-on-surface">
+            {assignments.map((a, i) => (
+              <tr key={i} className="border-b border-outline-variant/50 hover:bg-surface-container transition-colors">
+                <td className="py-3">{a.component}</td>
+                <td className={`py-3 font-bold ${a.pin === 'UNASSIGNED' ? 'text-error' : 'text-tertiary'}`}>{a.pin}</td>
+                <td className="py-3 text-on-surface-variant uppercase text-[11px]">{a.pinType}</td>
+                <td className="py-3 text-on-surface-variant capitalize text-[11px]">{a.role}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
-  )
+  );
 }

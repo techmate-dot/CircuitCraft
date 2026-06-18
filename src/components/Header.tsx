@@ -1,4 +1,5 @@
 import { Play, Cpu, Wifi, Settings } from 'lucide-react';
+import ProviderSelector from './ProviderSelector';
 
 export default function Header() {
   return (
@@ -12,6 +13,8 @@ export default function Header() {
         </div>
       </div>
       <div className="flex items-center gap-md">
+        {/* AI provider selector — shows which general-purpose LLM API is active */}
+        <ProviderSelector />
         <button className="bg-secondary text-on-secondary px-md h-[32px] rounded font-mono text-[11px] font-medium tracking-[0.05em] uppercase hover:bg-secondary-fixed transition-colors flex items-center gap-sm">
           <Play size={16} fill="currentColor" />
           Deploy Firmware

@@ -1,0 +1,58 @@
+{
+  "ESP32": {
+    "cost_range": "₦6,000 - ₦8,500",
+    "sourcing_note": "Widely available in Lagos computer markets/online; recommend heatsink for continuous use."
+  },
+  "Arduino_Uno": {
+    "cost_range": "₦4,500 - ₦6,000",
+    "sourcing_note": "Extremely common locally; rugged voltage regulator resists minor wiring mistakes."
+  },
+  "LED": {
+    "cost_range": "₦50 - ₦100",
+    "sourcing_note": "Ubiquitous in hobby shops; always use with a 220Ω series resistor to prevent burn-out."
+  },
+  "PIR_Sensor": {
+    "cost_range": "₦1,500 - ₦2,200",
+    "sourcing_note": "Commonly stocked; sensitive to RF noise, keep at least 10cm away from Wi-Fi antenna."
+  },
+  "HC-SR04": {
+    "cost_range": "₦1,200 - ₦1,800",
+    "sourcing_note": "Widely available; requires 5V logic level conversion if used with 3.3V ESP32 pins."
+  },
+  "SG90_Servo": {
+    "cost_range": "₦1,800 - ₦2,500",
+    "sourcing_note": "Commonly available; draws high peak current, supply power externally (not from GPIO)."
+  },
+  "Buzzer": {
+    "cost_range": "₦200 - ₦400",
+    "sourcing_note": "Cheap and ubiquitous; check active vs passive type before programming."
+  },
+  "Relay_Coil": {
+    "cost_range": "₦800 - ₦1,200",
+    "sourcing_note": "Available locally; requires transistor driver and flyback diode to prevent board damage."
+  },
+  "Relay_Module": {
+    "cost_range": "₦1,500 - ₦2,500",
+    "sourcing_note": "Widely available; includes onboard optocoupler isolation, safer for direct connection."
+  },
+  "DC_Motor": {
+    "cost_range": "₦1,000 - ₦1,500",
+    "sourcing_note": "Common toy motor; draws massive current under load, do not connect directly to GPIO."
+  },
+  "Motor_Driver": {
+    "cost_range": "₦2,000 - ₦3,500",
+    "sourcing_note": "Commonly stocked (L298N/ULN2003); essential for DC motors or heavy relay coils."
+  },
+  "DHT11": {
+    "cost_range": "₦1,200 - ₦1,800",
+    "sourcing_note": "Available; slow 2s read intervals, good for basic ambient temperature monitoring."
+  },
+  "Photoresistor": {
+    "cost_range": "₦100 - ₦200",
+    "sourcing_note": "Ubiquitous; requires a 10kΩ resistor to form a voltage divider for analog reading."
+  },
+  "LCD_I2C": {
+    "cost_range": "₦3,500 - ₦5,000",
+    "sourcing_note": "Common Character LCD with pre-soldered I2C backpack; saves pins by using SDA/SCL."
+  }
+}
