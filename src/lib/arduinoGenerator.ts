@@ -1,4 +1,4 @@
-import Blockly from 'blockly';
+import * as Blockly from 'blockly';
 
 const arduinoGenerator = new Blockly.Generator('ARDUINO') as any;
 

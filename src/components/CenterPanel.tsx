@@ -5,7 +5,7 @@ import { resolvePinAssignments } from '../lib/pinMapper';
 import ReactFlow, { Background, Controls } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { useRef, useEffect } from 'react';
-import Blockly from 'blockly';
+import * as Blockly from 'blockly';
 import arduinoGenerator from '../lib/arduinoGenerator';
 import { findSpec, COMPONENTS } from '../data/components';
 
