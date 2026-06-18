@@ -361,24 +361,7 @@ const registerCustomBlocks = () => {
   };
 };
 
-const baseTheme = (Blockly.Themes as any)?.Classic || (Blockly as any).Theme;
-const obsidianGoldTheme = Blockly.Theme.defineTheme('obsidian_gold', {
-  name: 'obsidian_gold',
-  base: baseTheme,
-  blockStyles: {},
-  categoryStyles: {},
-  componentStyles: {
-    workspaceBackgroundColour: '#121214',
-    toolboxBackgroundColour: '#1a1a1e',
-    toolboxTextColour: '#e0e0e0',
-    flyoutBackgroundColour: '#121214',
-    flyoutTextColour: '#e0e0e0',
-    scrollbarColour: '#d4af37',
-    scrollbarOpacity: 0.4,
-    insertionMarkerColour: '#d4af37',
-    insertionMarkerOpacity: 0.3,
-  } as any
-});
+
 
 const toolbox = {
   kind: "categoryToolbox",
@@ -500,6 +483,25 @@ function BlocksCanvas() {
     if (!blocklyRef.current) return;
 
     registerCustomBlocks();
+
+    const baseTheme = (Blockly.Themes as any)?.Classic || (Blockly as any).Theme;
+    const obsidianGoldTheme = Blockly.Theme.defineTheme('obsidian_gold', {
+      name: 'obsidian_gold',
+      base: baseTheme,
+      blockStyles: {},
+      categoryStyles: {},
+      componentStyles: {
+        workspaceBackgroundColour: '#121214',
+        toolboxBackgroundColour: '#1a1a1e',
+        toolboxTextColour: '#e0e0e0',
+        flyoutBackgroundColour: '#121214',
+        flyoutTextColour: '#e0e0e0',
+        scrollbarColour: '#d4af37',
+        scrollbarOpacity: 0.4,
+        insertionMarkerColour: '#d4af37',
+        insertionMarkerOpacity: 0.3,
+      } as any
+    });
 
     const workspace = Blockly.inject(blocklyRef.current, {
       toolbox: toolbox,
