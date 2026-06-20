@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Puzzle, Archive, Bot, Send, MoreHorizontal, Wifi, RotateCcw, Shuffle, ArrowRight, GitCompare, AlertTriangle, AlertCircle } from 'lucide-react';
+import { Search, Puzzle, Archive, Bot, Send, MoreHorizontal, Wifi, RotateCcw, Shuffle, ArrowRight, GitCompare, AlertTriangle, AlertCircle, ChevronDown } from 'lucide-react';
 import type { NavTab } from '../types';
 import AssistantContent from './AssistantContent';
 import { useCircuitStore } from '../store';
@@ -12,6 +12,7 @@ interface LeftPanelProps {
 
 export default function LeftPanel({ activeNav }: LeftPanelProps) {
   const [inputText, setInputText] = useState('');
+  const [bomOpen, setBomOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const {
@@ -117,6 +118,7 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
           type: 'plan',
         });
       } catch (e: any) {
+        console.error('[plan] error:', e);
         transitionTo('ERROR', { stage: 'plan', message: e.message, retryable: true });
         addMessage({ 
           role: 'assistant', 
@@ -295,7 +297,7 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
     pipelineState === 'AWAITING_APPROVAL';  // locked until user clicks Mark as Reviewed
 
   return (
-    <div className="w-[24%] border-r border-outline-variant flex flex-col bg-surface min-w-[280px]">
+    <div className="w-full h-full border-r border-outline-variant flex flex-col bg-surface">
       {/* Panel header */}
       <div className="h-12 border-b border-outline-variant flex items-center px-panel-padding justify-between shrink-0">
         <div className="flex items-center gap-sm text-secondary">
@@ -372,15 +374,25 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
       {/* What-If Simulation Sandbox (Module I Stretch) */}
       {approved && activeNav === 'assistant' && <WhatIfSandbox />}
 
-      {/* Bill of Materials widget */}
+      {/* Bill of Materials widget (collapsible — keeps the chat roomy) */}
       <div className="border-t border-outline-variant shrink-0 bg-surface-container-low">
-        <div className="h-10 px-panel-padding flex items-center justify-between border-b border-outline-variant">
+        <button
+          onClick={() => setBomOpen((o) => !o)}
+          className="w-full h-10 px-panel-padding flex items-center justify-between hover:bg-surface-container transition-colors"
+        >
           <span className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase text-on-surface-variant">
             Bill of Materials
           </span>
-          <Archive size={16} className="text-on-surface-variant" />
-        </div>
-        <BOMWidget />
+          <div className="flex items-center gap-2 text-on-surface-variant">
+            <Archive size={16} />
+            <ChevronDown size={14} className={`transition-transform ${bomOpen ? 'rotate-180' : ''}`} />
+          </div>
+        </button>
+        {bomOpen && (
+          <div className="border-t border-outline-variant">
+            <BOMWidget />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -452,6 +464,7 @@ function WhatIfSandbox() {
   const selected = options.find((o) => o.id === selectedOptionId);
   const [origComp, setOrigComp] = useState('');
   const [replComp, setReplComp] = useState('');
+  const [open, setOpen] = useState(false);
 
   // Get only peripherals from the current option (exclude microcontroller)
   const activePeripherals = selected
@@ -489,19 +502,25 @@ function WhatIfSandbox() {
 
   return (
     <div className="border-t border-outline-variant bg-surface-container-low shrink-0 flex flex-col">
-      <div className="h-10 px-panel-padding flex items-center justify-between border-b border-outline-variant bg-surface-container">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="h-10 px-panel-padding flex items-center justify-between bg-surface-container hover:bg-surface-container-highest transition-colors"
+      >
         <div className="flex items-center gap-1.5 text-secondary">
           <Shuffle size={14} />
           <span className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase">
             What-If Sandbox
           </span>
         </div>
-        <span className="font-mono text-[9px] uppercase tracking-wider text-on-surface-variant opacity-60">
-          Try swapping parts
-        </span>
-      </div>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[9px] uppercase tracking-wider text-on-surface-variant opacity-60">
+            Try swapping parts
+          </span>
+          <ChevronDown size={14} className={`text-on-surface-variant transition-transform ${open ? 'rotate-180' : ''}`} />
+        </div>
+      </button>
 
-      <div className="p-panel-padding flex flex-col gap-sm">
+      <div className={`p-panel-padding flex-col gap-sm border-t border-outline-variant ${open ? 'flex' : 'hidden'}`}>
         {!swapSimulation.active ? (
           <div className="flex flex-col gap-2">
             <div className="flex flex-col gap-1">

@@ -1,10 +1,10 @@
-import { Undo, Redo, ZoomIn, ZoomOut, MousePointer2, PlusCircle, Activity, Type, Download, ShieldCheck, ShieldAlert, Cpu, Lock, CheckCircle2 } from 'lucide-react';
+import { Undo, Redo, ZoomIn, ZoomOut, PlusCircle, Activity, ShieldCheck, ShieldAlert, Cpu, Lock, CheckCircle2, Boxes, Network } from 'lucide-react';
 import type { CenterView } from '../types';
 import { useCircuitStore } from '../store';
 import { resolvePinAssignments } from '../lib/pinMapper';
 import ReactFlow, { Background, Controls } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import * as Blockly from 'blockly';
 import arduinoGenerator from '../lib/arduinoGenerator';
 import { findSpec, COMPONENTS, BOARD_PROFILES } from '../data/components';
@@ -14,10 +14,34 @@ interface CenterPanelProps {
 }
 
 export default function CenterPanel({ view }: CenterPanelProps) {
+  // Plan view is driven by App (appears once a milestone plan exists). When not
+  // in plan view, the user toggles between the Blockly editor and the generated
+  // schematic. Both are derived from the same validated pin assignments.
+  const [buildView, setBuildView] = useState<'blocks' | 'schematic'>('blocks');
+  const showPlan = view === 'plan';
+
   return (
-    <div className="w-[46%] flex flex-col relative min-w-[400px]">
+    <div className="w-full h-full flex flex-col relative">
       {/* Floating Action Bar */}
-      <div className="absolute top-panel-padding right-panel-padding z-10 flex items-center gap-4">
+      <div className="absolute top-panel-padding right-panel-padding z-20 flex items-center gap-2">
+        {!showPlan && (
+          <div className="bg-surface border border-outline-variant rounded flex p-1 shadow-sm">
+            <button
+              onClick={() => setBuildView('blocks')}
+              title="Block editor"
+              className={`flex items-center gap-1 px-2 py-1 rounded font-mono text-[10px] uppercase tracking-wider transition-colors ${buildView === 'blocks' ? 'bg-secondary text-on-secondary' : 'text-on-surface-variant hover:bg-surface-container'}`}
+            >
+              <Boxes size={13} /> Blocks
+            </button>
+            <button
+              onClick={() => setBuildView('schematic')}
+              title="Generated schematic"
+              className={`flex items-center gap-1 px-2 py-1 rounded font-mono text-[10px] uppercase tracking-wider transition-colors ${buildView === 'schematic' ? 'bg-secondary text-on-secondary' : 'text-on-surface-variant hover:bg-surface-container'}`}
+            >
+              <Network size={13} /> Schematic
+            </button>
+          </div>
+        )}
         <div className="bg-surface border border-outline-variant rounded flex p-1 shadow-sm opacity-90 hover:opacity-100 transition-opacity">
           <button className="p-1 text-on-surface hover:bg-surface-container rounded" title="Undo">
             <Undo size={18} />
@@ -35,7 +59,7 @@ export default function CenterPanel({ view }: CenterPanelProps) {
         </div>
       </div>
 
-      {view === 'schematic' ? <SchematicCanvas /> : view === 'blocks' ? <BlocksCanvas /> : <PlanCanvas />}
+      {showPlan ? <PlanCanvas /> : buildView === 'schematic' ? <SchematicCanvas /> : <BlocksCanvas />}
     </div>
   );
 }
@@ -384,6 +408,40 @@ const registerCustomBlocks = () => {
 
 
 
+// Define the Blockly theme once. On Vite HMR this module re-runs, but the Blockly
+// registry (living in node_modules) persists — so re-defining the same theme name
+// throws "already registered" and leaves a half-injected workspace behind. Cache
+// it, and reuse the already-registered theme if it survived a hot reload.
+let obsidianGoldTheme: any = null;
+function getObsidianGoldTheme() {
+  if (obsidianGoldTheme) return obsidianGoldTheme;
+  const reg: any = (Blockly as any).registry;
+  const existing = reg?.getObject?.(reg.Type.THEME, 'obsidian_gold', false);
+  if (existing) {
+    obsidianGoldTheme = existing;
+    return obsidianGoldTheme;
+  }
+  const baseTheme = (Blockly.Themes as any)?.Classic || (Blockly as any).Theme;
+  obsidianGoldTheme = Blockly.Theme.defineTheme('obsidian_gold', {
+    name: 'obsidian_gold',
+    base: baseTheme,
+    blockStyles: {},
+    categoryStyles: {},
+    componentStyles: {
+      workspaceBackgroundColour: '#121214',
+      toolboxBackgroundColour: '#1a1a1e',
+      toolboxTextColour: '#e0e0e0',
+      flyoutBackgroundColour: '#121214',
+      flyoutTextColour: '#e0e0e0',
+      scrollbarColour: '#d4af37',
+      scrollbarOpacity: 0.4,
+      insertionMarkerColour: '#d4af37',
+      insertionMarkerOpacity: 0.3,
+    } as any,
+  });
+  return obsidianGoldTheme;
+}
+
 const toolbox = {
   kind: "categoryToolbox",
   contents: [
@@ -490,28 +548,18 @@ function BlocksCanvas() {
 
     registerCustomBlocks();
 
-    const baseTheme = (Blockly.Themes as any)?.Classic || (Blockly as any).Theme;
-    const obsidianGoldTheme = Blockly.Theme.defineTheme('obsidian_gold', {
-      name: 'obsidian_gold',
-      base: baseTheme,
-      blockStyles: {},
-      categoryStyles: {},
-      componentStyles: {
-        workspaceBackgroundColour: '#121214',
-        toolboxBackgroundColour: '#1a1a1e',
-        toolboxTextColour: '#e0e0e0',
-        flyoutBackgroundColour: '#121214',
-        flyoutTextColour: '#e0e0e0',
-        scrollbarColour: '#d4af37',
-        scrollbarOpacity: 0.4,
-        insertionMarkerColour: '#d4af37',
-        insertionMarkerOpacity: 0.3,
-      } as any
-    });
+    // HMR-safe: dispose any workspace left over from a previous effect run or a hot
+    // reload, and empty the container, before injecting a fresh one. Without this,
+    // Blockly DOM stacks up and the orphaned toolbox renders oversized over the page.
+    if (workspaceRef.current) {
+      try { workspaceRef.current.dispose(); } catch { /* already disposed */ }
+      workspaceRef.current = null;
+    }
+    blocklyRef.current.innerHTML = '';
 
     const workspace = Blockly.inject(blocklyRef.current, {
       toolbox: toolbox,
-      theme: obsidianGoldTheme,
+      theme: getObsidianGoldTheme(),
       grid: {
         spacing: 24,
         length: 3,
@@ -657,8 +705,12 @@ function BlocksCanvas() {
     workspace.addChangeListener(changeListener);
 
     return () => {
-      workspace.removeChangeListener(changeListener);
-      workspace.dispose();
+      try {
+        workspace.removeChangeListener(changeListener);
+        workspace.dispose();
+      } catch { /* already disposed */ }
+      if (workspaceRef.current === workspace) workspaceRef.current = null;
+      if (blocklyRef.current) blocklyRef.current.innerHTML = '';
     };
   }, [selectedOptionId, swapSimulation.active, swapSimulation.simulatedOption?.components]);
 
@@ -713,67 +765,113 @@ function BlocksCanvas() {
   );
 }
 
+// ─── Schematic Canvas — deterministic generator (no LLM) ─────────────────────
+// Builds an SVG wiring diagram from resolvePinAssignments(option): a host-board
+// box on the left, each peripheral on the right, wired to its validated pin.
+// Pin numbers come exclusively from the spec table — never from raw LLM text,
+// the same guarantee the code generator and pin map rely on.
+const SCHEMATIC_ROLE_COLOR: Record<string, string> = {
+  input:         '#4cd7f6', // tertiary
+  output:        '#4ae176', // secondary
+  bidirectional: '#ffb4ab', // error
+  power:         '#c7c6ca', // on-surface-variant
+};
+
 function SchematicCanvas() {
+  const { options, selectedOptionId, validation, swapSimulation } = useCircuitStore();
+  const selectedOption = swapSimulation.active && swapSimulation.simulatedOption
+    ? swapSimulation.simulatedOption
+    : options.find(o => o.id === selectedOptionId);
+  const confidence = validation?.confidence ?? 'verify_manually';
+
+  if (!selectedOption) {
+    return (
+      <div className="flex-1 schematic-bg w-full h-full relative flex flex-col items-center justify-center gap-3 text-center p-8">
+        <div className="flex flex-col gap-2 items-center text-on-surface-variant">
+          <div className="w-10 h-10 rounded-full border-2 border-dashed border-outline-variant flex items-center justify-center">
+            <Activity size={20} className="opacity-40" />
+          </div>
+          <span className="font-mono text-[11px] uppercase tracking-wider opacity-60">
+            Select an architecture option in the Copilot to generate the schematic
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  const assignments = resolvePinAssignments(selectedOption);
+  const boardComp = selectedOption.components.find((c: string) => {
+    const s = findSpec(c);
+    return s && s.is_microcontroller;
+  });
+  const boardName = (boardComp ? findSpec(boardComp)?.name : 'ESP32') ?? 'ESP32';
+  const boardVoltage = findSpec(boardName)?.voltage ?? 3.3;
+
+  // ── Layout geometry (pixel coordinates; canvas scrolls if it overflows) ──
+  const rowH = 70;
+  const boardX = 70;
+  const boardW = 150;
+  const boardTop = 50;
+  const boardH = Math.max(180, assignments.length * rowH + 30);
+  const railX = boardX + boardW;   // right edge of the board where pins exit
+  const compX = 470;
+  const compW = 170;
+  const compH = 46;
+  const svgW = compX + compW + 50;
+  const svgH = boardTop + boardH + 50;
+
   return (
-    <div className="flex-1 schematic-bg relative overflow-hidden cursor-crosshair w-full h-full">
-      <div className="absolute top-4 left-4 bg-surface border border-outline-variant rounded flex flex-col p-1 gap-1 z-10 shadow-lg">
-        <button className="p-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded transition-colors" title="Select">
-          <MousePointer2 size={18} />
-        </button>
-        <button className="p-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded transition-colors" title="Add Component">
-          <PlusCircle size={18} />
-        </button>
-        <button className="p-2 text-secondary bg-surface-container-highest rounded transition-colors" title="Wire Tool">
-          <Activity size={18} />
-        </button>
-        <button className="p-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded transition-colors" title="Label">
-          <Type size={18} />
-        </button>
-        <div className="h-[1px] w-full bg-outline-variant my-1"></div>
-        <button className="p-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded transition-colors" title="Export">
-          <Download size={18} />
-        </button>
+    <div className="flex-1 schematic-bg w-full h-full relative overflow-auto">
+      {/* header */}
+      <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 py-2 bg-surface/90 backdrop-blur border-b border-outline-variant/40">
+        <span className="font-mono text-[10px] uppercase tracking-wider text-on-surface-variant">
+          Generated Schematic · {boardName} · {assignments.length} component{assignments.length === 1 ? '' : 's'}
+        </span>
+        <ConfidenceBadge confidence={confidence} />
       </div>
 
-      <svg height="100%" width="100%" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <pattern height="24" id="grid" patternUnits="userSpaceOnUse" width="24">
-            <rect fill="none" height="24" width="24"></rect>
-          </pattern>
-        </defs>
-        <rect fill="url(#grid)" height="100%" width="100%"></rect>
-        <g className="cursor-pointer" transform="translate(100, 100)">
-          <rect className="schematic-component border-secondary" height="200" width="120" x="0" y="0"></rect>
-          <text className="schematic-text font-bold" fill="currentColor" textAnchor="middle" x="60" y="24">ESP32-WROOM</text>
-          <text className="schematic-text" textAnchor="middle" x="60" y="40">U1</text>
-          <g transform="translate(0, 60)">
-            <line className="schematic-component" x1="-10" x2="0" y1="0" y2="0"></line>
-            <circle className="schematic-pin" cx="-10" cy="0" r="2"></circle>
-            <text className="schematic-text" x="8" y="3">3V3</text>
-          </g>
-          <g transform="translate(0, 84)">
-            <line className="schematic-component" x1="-10" x2="0" y1="0" y2="0"></line>
-            <circle className="schematic-pin" cx="-10" cy="0" r="2"></circle>
-            <text className="schematic-text" x="8" y="3">GND</text>
-          </g>
-          <g transform="translate(120, 60)">
-            <line className="schematic-component" x1="0" x2="10" y1="0" y2="0"></line>
-            <circle className="schematic-pin" cx="10" cy="0" r="2"></circle>
-            <text className="schematic-text" textAnchor="end" x="-8" y="3">IO4</text>
-          </g>
-          <g transform="translate(120, 84)">
-            <line className="schematic-component" x1="0" x2="10" y1="0" y2="0"></line>
-            <circle className="schematic-pin" cx="10" cy="0" r="2"></circle>
-            <text className="schematic-text" textAnchor="end" x="-8" y="3">IO5</text>
-          </g>
-        </g>
-        <path className="schematic-wire" d="M 90 160 L 60 160 L 60 40 L 250 40 L 250 140 L 260 140"></path>
-      </svg>
-      <div className="absolute bottom-4 right-4 bg-surface border border-outline-variant p-2 rounded flex items-center gap-4 text-on-surface-variant font-mono text-[13px] shadow-lg">
-        <span>Grid: 24px</span>
-        <div className="w-[1px] h-4 bg-outline-variant"></div>
-        <span>100%</span>
+      <div style={{ paddingTop: 44 }}>
+        <svg width={svgW} height={svgH} xmlns="http://www.w3.org/2000/svg">
+          {/* ── Host board ── */}
+          <rect className="schematic-component" x={boardX} y={boardTop} width={boardW} height={boardH} rx={6} stroke="#d4af37" />
+          <text className="schematic-text" x={boardX + boardW / 2} y={boardTop + 24} textAnchor="middle" fill="#d4af37" style={{ fontWeight: 700, fontSize: 13 }}>{boardName}</text>
+          <text className="schematic-text" x={boardX + boardW / 2} y={boardTop + 40} textAnchor="middle">U1 · {boardVoltage}V logic</text>
+          <text className="schematic-text" x={boardX + 10} y={boardTop + boardH - 12} fill="#c7c6ca">GND ⏚</text>
+
+          {/* ── Per-component wiring ── */}
+          {assignments.map((a, i) => {
+            const y = boardTop + 64 + i * rowH;
+            const unassigned = a.pin === 'UNASSIGNED';
+            const color = unassigned ? '#ffb4ab' : (SCHEMATIC_ROLE_COLOR[a.role] ?? '#4ae176');
+            const compTop = y - compH / 2;
+
+            return (
+              <g key={i}>
+                {/* board pin node + stub */}
+                <circle cx={railX} cy={y} r={3} fill={color} />
+                <line x1={railX} y1={y} x2={railX + 12} y2={y} stroke={color} strokeWidth={2} />
+                <text className="schematic-text" x={railX - 8} y={y - 5} textAnchor="end" fill="#c7c6ca">{unassigned ? '—' : a.pin}</text>
+
+                {/* wire to component */}
+                <path d={`M ${railX + 12} ${y} H ${compX}`} stroke={color} strokeWidth={2} fill="none" strokeDasharray={unassigned ? '5 4' : undefined} />
+                <text className="schematic-text" x={(railX + 12 + compX) / 2} y={y - 6} textAnchor="middle" fill={color} style={{ fontSize: 9 }}>{a.pinType.toUpperCase()}</text>
+
+                {/* component box */}
+                <circle cx={compX} cy={y} r={3} fill={color} />
+                <rect className="schematic-component" x={compX} y={compTop} width={compW} height={compH} rx={5} stroke={color} />
+                <text className="schematic-text" x={compX + 14} y={y - 2} fill="#e4e1e6" style={{ fontWeight: 600, fontSize: 12 }}>{a.component}</text>
+                <text className="schematic-text" x={compX + 14} y={y + 14} fill={color} style={{ fontSize: 9 }}>{a.role.toUpperCase()} · {unassigned ? 'NO PIN AVAILABLE' : a.pin}</text>
+              </g>
+            );
+          })}
+        </svg>
       </div>
+
+      {assignments.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center text-on-surface-variant font-mono text-[11px] uppercase tracking-wider opacity-60 pointer-events-none">
+          No peripheral components to wire — add components to the architecture
+        </div>
+      )}
     </div>
   );
 }
