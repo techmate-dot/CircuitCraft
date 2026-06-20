@@ -140,6 +140,9 @@ const INITIAL_STATE = {
   ) as AIProvider,
   pipelineState: 'IDLE' as PipelineState,
   pipelineError: null as PipelineError | null,
+  isLoading: false,
+  approved: false,
+  clarifyStage: 'idle' as ClarifyStage,
   messages: [
     {
       role: 'assistant' as const,
@@ -165,20 +168,24 @@ const INITIAL_STATE = {
   } as SwapSimulation,
 };
 
-// ─── Store ────────────────────────────────────────────────────────────────────
-export const useCircuitStore = create<CircuitStore>((set, get) => ({
-  ...INITIAL_STATE,
+export const useCircuitStore = create<CircuitStore>((_set, get) => {
+  const set = (partial: any) => {
+    _set((state: any) => {
+      const next = typeof partial === 'function' ? partial(state) : partial;
+      if (next.pipelineState !== undefined) {
+        return {
+          ...next,
+          isLoading: LOADING_STATES.includes(next.pipelineState),
+          approved: APPROVED_STATES.includes(next.pipelineState),
+          clarifyStage: derivedClarifyStage(next.pipelineState),
+        };
+      }
+      return next;
+    });
+  };
 
-  // ── Derived computed properties ─────────────────────────────────────────────
-  get isLoading() {
-    return LOADING_STATES.includes(get().pipelineState);
-  },
-  get approved() {
-    return APPROVED_STATES.includes(get().pipelineState);
-  },
-  get clarifyStage(): ClarifyStage {
-    return derivedClarifyStage(get().pipelineState);
-  },
+  return {
+    ...INITIAL_STATE,
 
   // ── AI Provider ──────────────────────────────────────────────────────────────
   setAiProvider: (p) => {
@@ -358,4 +365,5 @@ export const useCircuitStore = create<CircuitStore>((set, get) => ({
   },
 
   reset: () => set({ ...INITIAL_STATE }),
-}));
+  };
+});
