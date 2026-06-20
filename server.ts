@@ -35,6 +35,43 @@ const openaiClient = () =>
 const anthropicClient = () =>
   new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' });
 
+// ─── Gemini model fallback chain ─────────────────────────────────────────────
+const GEMINI_PRIMARY = 'gemini-3.5-flash';
+const GEMINI_FALLBACK = 'gemini-3.1-flash-lite';
+
+function isOverloadError(e: any): boolean {
+  const status = e?.status ?? e?.statusCode ?? e?.response?.status;
+  const msg: string = (e?.message ?? '').toLowerCase();
+  return status === 503 || msg.includes('503') || msg.includes('overloaded') || msg.includes('unavailable');
+}
+
+async function geminiWithFallback(params: { contents: string; config: object }): Promise<string> {
+  const ai = geminiClient();
+  const MAX_RETRIES = 2;
+  const BACKOFF_MS = 1500;
+
+  for (const model of [GEMINI_PRIMARY, GEMINI_FALLBACK]) {
+    let lastError: any;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const result = await ai.models.generateContent({ model, ...params });
+        if (model !== GEMINI_PRIMARY) console.warn(`[gemini] ⚠️  Using fallback model ${model} — primary returned 503`);
+        return result.text ?? '{}';
+      } catch (e: any) {
+        lastError = e;
+        if (isOverloadError(e) && attempt < MAX_RETRIES - 1) {
+          console.warn(`[gemini] 503 on model=${model} attempt=${attempt + 1}, retrying in ${BACKOFF_MS}ms…`);
+          await new Promise(r => setTimeout(r, BACKOFF_MS * (attempt + 1)));
+        } else {
+          break;
+        }
+      }
+    }
+    if (!isOverloadError(lastError)) throw lastError;
+  }
+  throw new Error('All Gemini models returned 503 — service unavailable');
+}
+
 function hasApiKey(provider: string): boolean {
   if (provider === 'openai') return !!process.env.OPENAI_API_KEY;
   if (provider === 'anthropic') return !!process.env.ANTHROPIC_API_KEY;
@@ -268,13 +305,10 @@ async function rawClarifyCall(provider: string, prompt: string): Promise<string>
   }
 
   // Default: Gemini
-  const ai = geminiClient();
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-pro',
+  return await geminiWithFallback({
     contents: `${CLARIFY_SYSTEM}\n\n${prompt}`,
     config: { responseMimeType: 'application/json', responseSchema: intentSchema },
   });
-  return response.text ?? '{}';
 }
 
 async function rawCompareCall(provider: string, prompt: string): Promise<string> {
@@ -304,13 +338,10 @@ async function rawCompareCall(provider: string, prompt: string): Promise<string>
     return match ? match[0] : '{"options":[]}';
   }
 
-  const ai = geminiClient();
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-pro',
+  return await geminiWithFallback({
     contents: `${COMPARE_SYSTEM}\n\n${prompt}`,
     config: { responseMimeType: 'application/json', responseSchema: architectureOptionSchema },
   });
-  return response.text ?? '{"options":[]}';
 }
 
 async function rawPlanCall(provider: string, prompt: string): Promise<string> {
@@ -345,13 +376,10 @@ Output ONLY valid JSON: { "milestones": [ { "id": string, "title": string, "desc
     return match ? match[0] : '{"milestones":[]}';
   }
 
-  const ai = geminiClient();
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-pro',
+  return await geminiWithFallback({
     contents: `${PLAN_SYSTEM}\n\nOption: ${prompt}`,
     config: { responseMimeType: 'application/json', responseSchema: milestonePlanSchema },
   });
-  return response.text ?? '{"milestones":[]}';
 }
 
 // ─── Mock fallbacks (used when no API key is set) ─────────────────────────────
