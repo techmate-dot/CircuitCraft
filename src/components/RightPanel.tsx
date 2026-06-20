@@ -134,6 +134,7 @@ function CodeView({
   generatedCode: string | null;
 }) {
   const [copied, setCopied] = useState(false);
+  const { setGeneratedCode } = useCircuitStore();
 
   const code = generatedCode
     ? generatedCode
@@ -184,6 +185,16 @@ function CodeView({
         </div>
       )}
 
+      {/* Manual edit disclosure banner (only after approval) */}
+      {approved && option && (
+        <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-secondary/8 border-b border-secondary/20">
+          <CheckCircle2 size={12} className="text-secondary shrink-0" />
+          <span className="text-[11px] text-secondary font-mono">
+            Note: Manual edits to code do not parse back into Blockly blocks.
+          </span>
+        </div>
+      )}
+
       {/* Monaco editor */}
       <div className="flex-1 relative">
         <Editor
@@ -194,11 +205,16 @@ function CodeView({
             minimap: { enabled: false },
             fontSize: 12,
             fontFamily: 'JetBrains Mono, monospace',
-            readOnly: true,
+            readOnly: !approved,
             scrollBeyondLastLine: false,
             wordWrap: 'on',
           }}
           value={code}
+          onChange={(val) => {
+            if (val !== undefined) {
+              setGeneratedCode(val);
+            }
+          }}
         />
         {/* Module H: overlay until approved */}
         {!approved && option && <PendingReviewOverlay />}

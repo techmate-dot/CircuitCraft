@@ -1,9 +1,14 @@
-import { Bot, HelpCircle, Lightbulb, CheckCircle2, AlertTriangle, AlertCircle, Zap, DollarSign, Layers, Battery } from 'lucide-react';
+import {
+  Bot, HelpCircle, Lightbulb, CheckCircle2, AlertTriangle,
+  AlertCircle, Zap, DollarSign, Layers, Battery, RefreshCw, ShieldX,
+  ClipboardCheck, MapPin,
+} from 'lucide-react';
 import { useCircuitStore } from '../store';
 import ReactMarkdown from 'react-markdown';
 import { useState } from 'react';
 import type { ChatMessage } from '../store';
 import type { ArchitectureOption } from '../types';
+import type { RuleViolation } from '../data/components';
 
 // ─── Message bubble wrapper ───────────────────────────────────────────────────
 function MessageBubble({ msg, children }: { msg: ChatMessage; children?: React.ReactNode }) {
@@ -72,6 +77,50 @@ function ClarifyCard({ intent }: { intent: import('../types').IntentObject }) {
   );
 }
 
+// ─── Rule ID badge ─────────────────────────────────────────────────────────────
+function RuleIdBadge({ ruleId }: { ruleId: string }) {
+  return (
+    <span className="font-mono text-[9px] px-1.5 py-0.5 rounded border border-current bg-current/10 shrink-0 tracking-wider font-bold">
+      {ruleId}
+    </span>
+  );
+}
+
+// ─── Single violation row ──────────────────────────────────────────────────────
+function ViolationRow({ v }: { v: RuleViolation }) {
+  const isConflict = v.severity === 'conflict';
+  return (
+    <div
+      className={`flex gap-2 p-2 rounded items-start text-xs ${
+        isConflict ? 'text-error bg-error/10 border border-error/20' : 'text-tertiary bg-tertiary/10 border border-tertiary/20'
+      }`}
+    >
+      {isConflict
+        ? <AlertCircle size={13} className="mt-0.5 shrink-0" />
+        : <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+      }
+      <div className="flex flex-col gap-0.5 flex-1">
+        <div className="flex items-center gap-1.5">
+          <RuleIdBadge ruleId={v.ruleId} />
+          <span className="font-mono text-[9px] uppercase tracking-wider opacity-70">
+            {isConflict ? 'conflict' : 'warning'}
+          </span>
+        </div>
+        <span className="leading-snug">{v.message}</span>
+        {v.components.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-0.5">
+            {v.components.map((c, i) => (
+              <span key={i} className="font-mono text-[9px] px-1 py-0.5 rounded bg-current/10 border border-current/20">
+                {c}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Tradeoff row ─────────────────────────────────────────────────────────────
 const TRADEOFF_META = [
   { key: 'cost',        label: 'Cost',        Icon: DollarSign },
@@ -96,6 +145,7 @@ function OptionCard({
     <button
       onClick={onSelect}
       disabled={disabled}
+      id={`option-card-${opt.id}`}
       className={`
         w-full text-left p-3 rounded-lg border transition-all duration-200 flex flex-col gap-2
         ${selected
@@ -145,55 +195,67 @@ function OptionCard({
   );
 }
 
-// ─── Validation inline widget ─────────────────────────────────────────────────
+// ─── Validation widget — consumes RuleViolation[] with rule IDs ───────────────
 function ValidationWidget() {
-  const { validation, approved, setApproved, setClarifyStage, isLoading } = useCircuitStore();
+  const { validation, pipelineState, transitionTo, isLoading } = useCircuitStore();
   const [acknowledged, setAcknowledged] = useState(false);
 
   if (!validation) return null;
 
-  const hasIssues = validation.conflicts.length > 0 || validation.warnings.length > 0;
-  const canApprove = !hasIssues || acknowledged;
+  const conflicts = validation.violations.filter(v => v.severity === 'conflict');
+  const warnings  = validation.violations.filter(v => v.severity === 'warning');
+  const approved  = ['PLAN_GENERATING', 'AWAITING_APPROVAL', 'APPROVED'].includes(pipelineState);
+
+  const hasIssues  = conflicts.length > 0 || warnings.length > 0;
+  const canApprove = conflicts.length === 0 && (!hasIssues || acknowledged);
 
   return (
     <div className="mt-3 flex flex-col gap-2 border-t border-outline-variant/40 pt-3">
+      {/* Validation summary badge */}
+      <div className="flex items-center gap-2">
+        {conflicts.length === 0 && warnings.length === 0 ? (
+          <div className="flex items-center gap-1.5 text-secondary text-xs">
+            <CheckCircle2 size={13} />
+            <span className="font-mono font-bold">All DRC rules passed</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 text-xs text-on-surface-variant">
+            <ShieldX size={13} />
+            <span className="font-mono">
+              {conflicts.length} conflict{conflicts.length !== 1 ? 's' : ''}
+              {warnings.length > 0 && `, ${warnings.length} warning${warnings.length !== 1 ? 's' : ''}`}
+            </span>
+          </div>
+        )}
+      </div>
+
       {/* Conflicts — block approval */}
-      {validation.conflicts.map((c, i) => (
-        <div key={i} className="flex gap-2 text-error bg-error/10 p-2 rounded items-start text-xs">
-          <AlertCircle size={13} className="mt-0.5 shrink-0" />
-          <span>{c}</span>
-        </div>
-      ))}
+      {conflicts.map((v, i) => <ViolationRow key={i} v={v} />)}
+
       {/* Warnings — require acknowledgement */}
-      {validation.warnings.map((w, i) => (
-        <div key={i} className="flex gap-2 text-tertiary bg-tertiary/10 p-2 rounded items-start text-xs">
-          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-          <span>{w}</span>
-        </div>
-      ))}
+      {warnings.map((v, i) => <ViolationRow key={i} v={v} />)}
 
       {/* Only show controls if not yet approved */}
       {!approved && (
         <div className="flex flex-col gap-2 mt-1">
-          {/* Acknowledgement checkbox — only shown when there are issues */}
-          {hasIssues && (
+          {hasIssues && warnings.length > 0 && conflicts.length === 0 && (
             <label className="flex items-center gap-2 text-xs text-on-surface cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={acknowledged}
                 onChange={(e) => setAcknowledged(e.target.checked)}
                 className="accent-secondary"
+                id="ack-warnings-checkbox"
               />
               I have reviewed and acknowledge the warnings above
             </label>
           )}
-          {/* Conflicts hard-block the button regardless of acknowledgement */}
-          {validation.conflicts.length === 0 ? (
+          {conflicts.length === 0 ? (
             <button
+              id="approve-plan-button"
               disabled={!canApprove || isLoading}
               onClick={() => {
-                setApproved(true);
-                setClarifyStage('option_selected');
+                transitionTo('PLAN_GENERATING');
                 window.dispatchEvent(new CustomEvent('APPROVE_PLAN'));
               }}
               className="bg-secondary text-on-secondary px-3 py-1.5 rounded text-xs font-bold hover:bg-secondary-fixed transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
@@ -226,16 +288,112 @@ function ValidationWidget() {
   );
 }
 
+// ─── Plan Review Widget — APPROVE_FINAL gate (Module H) ─────────────────────────────
+// This is the ONLY way to transition AWAITING_APPROVAL → APPROVED.
+// Hard Rule 4: never auto-advance past a decision point.
+function PlanReviewWidget() {
+  const { pipelineState, transitionTo, plan } = useCircuitStore();
+  const isAwaitingApproval = pipelineState === 'AWAITING_APPROVAL';
+  const isApproved         = pipelineState === 'APPROVED';
+
+  if (!plan) return null;
+
+  return (
+    <div className="mt-3 flex flex-col gap-2 border-t border-outline-variant/40 pt-3">
+      {/* Plan summary: milestone count */}
+      <div className="flex items-center gap-1.5 text-secondary text-xs">
+        <MapPin size={12} />
+        <span className="font-mono">
+          {plan.milestones.length} milestones generated — Milestone 1 is the active build step
+        </span>
+      </div>
+
+      {/* Milestone titles preview */}
+      <div className="flex flex-col gap-1">
+        {plan.milestones.map((m, i) => (
+          <div key={m.id} className={`flex items-center gap-2 text-xs ${
+            i === 0 ? 'text-secondary font-bold' : 'text-on-surface-variant'
+          }`}>
+            <span className={`font-mono text-[9px] w-5 shrink-0 ${
+              i === 0 ? 'text-secondary' : 'text-on-surface-variant'
+            }`}>M{i + 1}</span>
+            <span className="truncate">{m.title}</span>
+            {i === 0 && (
+              <span className="font-mono text-[8px] px-1 py-0.5 rounded bg-secondary text-on-secondary uppercase tracking-wider shrink-0">Active</span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* APPROVE_FINAL action — the explicit gate */}
+      {isAwaitingApproval && (
+        <button
+          id="mark-reviewed-button"
+          onClick={() => transitionTo('APPROVED')}
+          className="flex items-center gap-1.5 bg-secondary text-on-secondary px-3 py-2 rounded text-xs font-bold hover:bg-secondary-fixed transition-colors mt-1"
+        >
+          <ClipboardCheck size={13} />
+          Mark as Reviewed — Unlock Diagram &amp; Code
+        </button>
+      )}
+
+      {/* Post-approval confirmation */}
+      {isApproved && (
+        <div className="flex items-center gap-1.5 text-secondary text-xs mt-1">
+          <CheckCircle2 size={12} />
+          <span>Plan reviewed — diagram and code panels are unlocked.</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Error card — shown when schema validation fails after retry ───────────────
+function ErrorCard({ message }: { message: string }) {
+  const { transitionTo, reset } = useCircuitStore();
+  return (
+    <div className="mt-3 flex flex-col gap-2 border-t border-outline-variant/40 pt-3">
+      <div className="flex gap-2 p-3 rounded bg-error/10 border border-error/20 items-start text-xs text-error">
+        <AlertCircle size={13} className="mt-0.5 shrink-0" />
+        <div className="flex flex-col gap-1">
+          <span className="font-mono font-bold uppercase tracking-wide text-[10px]">AI Response Error</span>
+          <span className="leading-snug text-on-surface">{message}</span>
+          <span className="text-on-surface-variant text-[10px]">
+            The AI returned a malformed response twice. This is rare — please try submitting your idea again.
+          </span>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={() => transitionTo('IDLE')}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-container border border-outline-variant rounded text-xs font-bold hover:bg-surface-container-highest transition-colors"
+        >
+          <RefreshCw size={11} />
+          Try Again
+        </button>
+        <button
+          onClick={() => reset()}
+          className="px-2.5 py-1.5 text-xs text-on-surface-variant hover:text-on-surface transition-colors"
+        >
+          Start Over
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main AssistantContent ────────────────────────────────────────────────────
 export default function AssistantContent() {
-  const { messages, options, selectedOptionId, setSelectedOptionId, intent, clarifyStage, isLoading } = useCircuitStore();
+  const { messages, options, selectedOptionId, setSelectedOptionId, intent, clarifyStage, isLoading, pipelineState, pipelineError } = useCircuitStore();
 
   return (
     <div className="flex flex-col gap-4">
       {messages.map((msg, i) => {
-        const isOptionsMsg = msg.type === 'options' && options.length > 0;
-        const isClarifyMsg = msg.type === 'clarify' && intent !== null;
+        const isOptionsMsg    = msg.type === 'options' && options.length > 0;
+        const isClarifyMsg    = msg.type === 'clarify' && intent !== null;
         const isValidationMsg = msg.type === 'validation';
+        const isErrorMsg      = msg.type === 'error';
+        const isPlanMsg       = msg.type === 'plan';
 
         return (
           <MessageBubble key={i} msg={msg}>
@@ -272,14 +430,20 @@ export default function AssistantContent() {
               </div>
             )}
 
-            {/* Validation widget */}
+            {/* Validation widget — uses RuleViolation[] with rule IDs */}
             {isValidationMsg && <ValidationWidget />}
+
+            {/* Plan review widget */}
+            {isPlanMsg && <PlanReviewWidget />}
+
+            {/* Error card — schema validation failed */}
+            {isErrorMsg && <ErrorCard message={msg.content} />}
           </MessageBubble>
         );
       })}
 
-      {/* Typing indicator while loading — covers both clarify and plan generation */}
-      {(clarifyStage === 'clarifying' || isLoading) && (
+      {/* Typing indicator while loading */}
+      {(clarifyStage === 'clarifying' || (isLoading && pipelineState !== 'VALIDATING')) && (
         <div className="flex items-center gap-1.5 text-on-surface-variant">
           <Bot size={13} />
           <div className="flex gap-1 items-center p-2 bg-surface-container rounded-lg border border-outline-variant/40">
@@ -292,6 +456,11 @@ export default function AssistantContent() {
             ))}
           </div>
         </div>
+      )}
+
+      {/* Pipeline error banner (from store) */}
+      {pipelineState === 'ERROR' && pipelineError && (
+        <ErrorCard message={pipelineError.message} />
       )}
     </div>
   );

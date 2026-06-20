@@ -1,19 +1,24 @@
 /**
  * CircuitCraft API server
  *
- * Routes /api/clarify and /api/compare to whichever AI provider is requested.
- * Provider is determined by the X-AI-Provider request header, falling back to
- * the AI_PROVIDER environment variable, then to "gemini".
+ * Routes /api/clarify, /api/compare, and /api/plan to whichever AI provider
+ * is requested. Provider is determined by the X-AI-Provider request header,
+ * falling back to the AI_PROVIDER environment variable, then to "gemini".
  *
  * IMPORTANT: This app uses general-purpose LLM APIs (Gemini, OpenAI, Claude)
  * plus a deterministic rules engine for validation. No custom-trained ML model
  * is used anywhere in this stack.
+ *
+ * Section 5.1a compliance: Every LLM response is validated against a Zod schema
+ * before reaching any downstream code. On failure: one retry with an
+ * error-correction prompt. On a second failure: explicit error payload returned.
  */
 
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import { z } from 'zod';
 
 // ─── Provider SDK imports ─────────────────────────────────────────────────────
 import { GoogleGenAI, Type, type Schema } from '@google/genai';
@@ -36,14 +41,54 @@ function hasApiKey(provider: string): boolean {
   return !!process.env.GEMINI_API_KEY;
 }
 
-// ─── Gemini JSON schemas ──────────────────────────────────────────────────────
+// ─── Zod runtime schemas (Section 5.1a) ──────────────────────────────────────
+// These mirror the TypeScript types and enforce them at runtime on every LLM response.
+
+const ZIntentObject = z.object({
+  goal: z.string().min(1, 'goal must be a non-empty string'),
+  components_mentioned: z.array(z.string()),
+  missing_info: z.array(z.string()),
+  assumptions: z.array(z.string()),
+});
+
+const ZTradeoffs = z.object({
+  cost: z.string().min(1),
+  portability: z.string().min(1),
+  complexity: z.string().min(1),
+  power: z.string().min(1),
+});
+
+const ZArchitectureOption = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  components: z.array(z.string()).min(1),
+  tradeoffs: ZTradeoffs,
+  summary: z.string().min(1),
+});
+
+const ZCompareResponse = z.object({
+  options: z.array(ZArchitectureOption).length(2, 'exactly 2 architecture options required'),
+});
+
+const ZMilestone = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().min(1),
+  depends_on: z.string().nullable().optional(),
+});
+
+const ZMilestonePlan = z.object({
+  milestones: z.array(ZMilestone).min(4).max(5),
+});
+
+// ─── Gemini JSON schemas (for structured output) ──────────────────────────────
 const intentSchema: Schema = {
   type: Type.OBJECT,
   properties: {
-    goal: { type: Type.STRING },
-    components_mentioned: { type: Type.ARRAY, items: { type: Type.STRING } },
-    missing_info: { type: Type.ARRAY, items: { type: Type.STRING } },
-    assumptions: { type: Type.ARRAY, items: { type: Type.STRING } },
+    goal:                  { type: Type.STRING },
+    components_mentioned:  { type: Type.ARRAY, items: { type: Type.STRING } },
+    missing_info:          { type: Type.ARRAY, items: { type: Type.STRING } },
+    assumptions:           { type: Type.ARRAY, items: { type: Type.STRING } },
   },
   required: ['goal', 'components_mentioned', 'missing_info', 'assumptions'],
 };
@@ -57,16 +102,16 @@ const architectureOptionSchema: Schema = {
       items: {
         type: Type.OBJECT,
         properties: {
-          id: { type: Type.STRING },
-          label: { type: Type.STRING },
+          id:         { type: Type.STRING },
+          label:      { type: Type.STRING },
           components: { type: Type.ARRAY, items: { type: Type.STRING } },
           tradeoffs: {
             type: Type.OBJECT,
             properties: {
-              cost: { type: Type.STRING },
+              cost:        { type: Type.STRING },
               portability: { type: Type.STRING },
-              complexity: { type: Type.STRING },
-              power: { type: Type.STRING },
+              complexity:  { type: Type.STRING },
+              power:       { type: Type.STRING },
             },
             required: ['cost', 'portability', 'complexity', 'power'],
           },
@@ -87,10 +132,10 @@ const milestonePlanSchema: Schema = {
       items: {
         type: Type.OBJECT,
         properties: {
-          id: { type: Type.STRING },
-          title: { type: Type.STRING },
+          id:          { type: Type.STRING },
+          title:       { type: Type.STRING },
           description: { type: Type.STRING },
-          depends_on: { type: Type.STRING, nullable: true },
+          depends_on:  { type: Type.STRING, nullable: true },
         },
         required: ['id', 'title', 'description'],
       },
@@ -130,55 +175,72 @@ Output ONLY valid JSON:
 
 Do NOT add commentary outside the JSON.`;
 
-// ─── Provider-agnostic LLM call ───────────────────────────────────────────────
+// ─── Retry/error wrapper (Section 5.1a) ──────────────────────────────────────
 type ConversationTurn = { role: 'user' | 'assistant'; content: string };
 
-async function callClarify(
-  provider: string,
-  userText: string,
-  context: ConversationTurn[],
-): Promise<object> {
-  if (!hasApiKey(provider)) {
-    console.warn(`[mock] API key missing for ${provider}. Returning mock clarify response.`);
-    if (context.length === 0) {
-      return {
-        goal: "Build a motion-activated alert system with buzzer or relay",
-        components_mentioned: ["PIR Sensor", "Buzzer", "Relay"],
-        missing_info: [
-          "Do you want to use a low-power microcontroller (like ESP32) or standard Arduino Uno?",
-          "Does the system need to switch high-voltage loads using a relay, or just sound a buzzer?"
-        ],
-        assumptions: [
-          "Assuming USB or battery power is available",
-          "Assuming indoor usage with a detection range of 5 meters"
-        ]
-      };
-    } else {
-      return {
-        goal: "Build a motion-activated alert system using an ESP32 and a relay",
-        components_mentioned: ["ESP32", "PIR Sensor", "Relay_Coil"],
-        missing_info: [],
-        assumptions: [
-          "Assuming USB 5V power source",
-          "Assuming active-high signaling for the relay control"
-        ]
-      };
-    }
+/**
+ * Validates raw LLM JSON output against a Zod schema.
+ * On failure: retries once with an error-correction prompt.
+ * On second failure: returns { __schema_error: true, message: string }.
+ * Never silently passes through malformed data.
+ */
+async function withSchemaValidation<T>(
+  schema: z.ZodSchema<T>,
+  rawCall: () => Promise<string>,
+  retryCall: (errorMsg: string) => Promise<string>,
+  label: string,
+): Promise<T | { __schema_error: true; message: string }> {
+  // Attempt 1
+  let rawText: string;
+  try {
+    rawText = await rawCall();
+  } catch (e: any) {
+    return { __schema_error: true, message: `${label} API call failed: ${e.message}` };
   }
 
-  // Build the full conversation: prior context + current user message
-  const fullHistory: ConversationTurn[] = [
-    ...context,
-    { role: 'user', content: userText },
-  ];
-  const conversationBlock = fullHistory
-    .map((t) => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
-    .join('\n');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    parsed = {};
+  }
 
-  const userPrompt = context.length > 0
-    ? `This is a follow-up. Here is the conversation so far:\n${conversationBlock}\n\nUpdate the intent JSON based on the user's latest reply.`
-    : `User idea: "${userText}"`;
+  const result = schema.safeParse(parsed);
+  if (result.success) return result.data;
 
+  const zodIssues = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
+  console.warn(`[${label}] schema validation failed on attempt 1: ${zodIssues}. Retrying…`);
+
+  // Attempt 2 — error-correction prompt
+  let retryText: string;
+  try {
+    retryText = await retryCall(zodIssues);
+  } catch (e: any) {
+    return { __schema_error: true, message: `${label} retry API call failed: ${e.message}` };
+  }
+
+  let retryParsed: unknown;
+  try {
+    retryParsed = JSON.parse(retryText);
+  } catch {
+    retryParsed = {};
+  }
+
+  const retryResult = schema.safeParse(retryParsed);
+  if (retryResult.success) return retryResult.data;
+
+  const retryIssues = retryResult.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
+  console.error(`[${label}] schema validation failed on attempt 2: ${retryIssues}. Returning error state.`);
+
+  return {
+    __schema_error: true,
+    message: `The AI returned a response that didn't match the expected format (twice). Please try again. Technical detail: ${retryIssues}`,
+  };
+}
+
+// ─── Raw LLM call helpers ─────────────────────────────────────────────────────
+
+async function rawClarifyCall(provider: string, prompt: string): Promise<string> {
   if (provider === 'openai') {
     const client = openaiClient();
     const resp = await client.chat.completions.create({
@@ -186,10 +248,10 @@ async function callClarify(
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: CLARIFY_SYSTEM },
-        { role: 'user', content: userPrompt },
+        { role: 'user', content: prompt },
       ],
     });
-    return JSON.parse(resp.choices[0].message.content ?? '{}');
+    return resp.choices[0].message.content ?? '{}';
   }
 
   if (provider === 'anthropic') {
@@ -198,67 +260,24 @@ async function callClarify(
       model: 'claude-opus-4-5',
       max_tokens: 1024,
       system: CLARIFY_SYSTEM,
-      messages: [{ role: 'user', content: userPrompt }],
+      messages: [{ role: 'user', content: prompt }],
     });
     const text = resp.content[0].type === 'text' ? resp.content[0].text : '{}';
     const match = text.match(/\{[\s\S]*\}/);
-    return JSON.parse(match ? match[0] : '{}');
+    return match ? match[0] : '{}';
   }
 
   // Default: Gemini
   const ai = geminiClient();
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-pro',
-    contents: `${CLARIFY_SYSTEM}\n\n${userPrompt}`,
+    contents: `${CLARIFY_SYSTEM}\n\n${prompt}`,
     config: { responseMimeType: 'application/json', responseSchema: intentSchema },
   });
-  return JSON.parse(response.text ?? '{}');
+  return response.text ?? '{}';
 }
 
-async function callCompare(
-  provider: string,
-  intent: object,
-): Promise<object[]> {
-  if (!hasApiKey(provider)) {
-    console.warn(`[mock] API key missing for ${provider}. Returning mock compare options.`);
-    return [
-      {
-        id: "esp32-relay",
-        label: "ESP32 Wi-Fi Relay Control",
-        components: [
-          "ESP32",
-          "PIR Sensor (Pin GPIO13)",
-          "Relay_Coil (Pin GPIO5)"
-        ],
-        tradeoffs: {
-          cost: "Slightly higher due to ESP32 board cost.",
-          portability: "Requires a stable 5V supply for the relay coil.",
-          complexity: "Medium complexity due to wiring raw relay coil.",
-          power: "High power consumption when relay coil is active (~70mA)."
-        },
-        summary: "Low-latency motion detection trigger with direct relay coil drive (triggers warning as Relay_Coil needs driver)."
-      },
-      {
-        id: "arduino-buzzer",
-        label: "Arduino Uno Passive Alert",
-        components: [
-          "Arduino_Uno",
-          "PIR Sensor (Pin D2)",
-          "Buzzer (Pin D3)"
-        ],
-        tradeoffs: {
-          cost: "Very low cost using standard parts.",
-          portability: "Easy to run on a 9V battery.",
-          complexity: "Very low complexity, beginner friendly.",
-          power: "Low power consumption, ideal for battery operation."
-        },
-        summary: "Simple audible alert using a piezo buzzer and motion sensor."
-      }
-    ];
-  }
-
-  const userPrompt = `Intent: ${JSON.stringify(intent, null, 2)}`;
-
+async function rawCompareCall(provider: string, prompt: string): Promise<string> {
   if (provider === 'openai') {
     const client = openaiClient();
     const resp = await client.chat.completions.create({
@@ -266,11 +285,10 @@ async function callCompare(
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: COMPARE_SYSTEM },
-        { role: 'user', content: userPrompt },
+        { role: 'user', content: prompt },
       ],
     });
-    const parsed = JSON.parse(resp.choices[0].message.content ?? '{"options":[]}');
-    return parsed.options ?? [];
+    return resp.choices[0].message.content ?? '{"options":[]}';
   }
 
   if (provider === 'anthropic') {
@@ -279,23 +297,251 @@ async function callCompare(
       model: 'claude-opus-4-5',
       max_tokens: 2048,
       system: COMPARE_SYSTEM,
-      messages: [{ role: 'user', content: userPrompt }],
+      messages: [{ role: 'user', content: prompt }],
     });
     const text = resp.content[0].type === 'text' ? resp.content[0].text : '{"options":[]}';
     const match = text.match(/\{[\s\S]*\}/);
-    const parsed = JSON.parse(match ? match[0] : '{"options":[]}');
-    return parsed.options ?? [];
+    return match ? match[0] : '{"options":[]}';
   }
 
-  // Default: Gemini
   const ai = geminiClient();
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-pro',
-    contents: `${COMPARE_SYSTEM}\n\n${userPrompt}`,
+    contents: `${COMPARE_SYSTEM}\n\n${prompt}`,
     config: { responseMimeType: 'application/json', responseSchema: architectureOptionSchema },
   });
-  const parsed = JSON.parse(response.text ?? '{"options":[]}');
-  return parsed.options ?? [];
+  return response.text ?? '{"options":[]}';
+}
+
+async function rawPlanCall(provider: string, prompt: string): Promise<string> {
+  const PLAN_SYSTEM = `Given a hardware architecture option, generate a milestone plan for building it (exactly 4 or 5 milestones).
+Milestones should progress from: hardware assembly → component test → logic integration → calibration/tuning → final test.
+Milestone 1 must be the hardware breadboard setup only — no code integration yet.
+Output ONLY valid JSON: { "milestones": [ { "id": string, "title": string, "description": string, "depends_on": string | null } ] }`;
+
+  if (provider === 'openai') {
+    const client = openaiClient();
+    const resp = await client.chat.completions.create({
+      model: 'gpt-4o',
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: PLAN_SYSTEM },
+        { role: 'user', content: prompt },
+      ],
+    });
+    return resp.choices[0].message.content ?? '{"milestones":[]}';
+  }
+
+  if (provider === 'anthropic') {
+    const client = anthropicClient();
+    const resp = await client.messages.create({
+      model: 'claude-opus-4-5',
+      max_tokens: 1024,
+      system: PLAN_SYSTEM,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const text = resp.content[0].type === 'text' ? resp.content[0].text : '{"milestones":[]}';
+    const match = text.match(/\{[\s\S]*\}/);
+    return match ? match[0] : '{"milestones":[]}';
+  }
+
+  const ai = geminiClient();
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-pro',
+    contents: `${PLAN_SYSTEM}\n\nOption: ${prompt}`,
+    config: { responseMimeType: 'application/json', responseSchema: milestonePlanSchema },
+  });
+  return response.text ?? '{"milestones":[]}';
+}
+
+// ─── Mock fallbacks (used when no API key is set) ─────────────────────────────
+
+function mockClarifyResponse(context: ConversationTurn[]): string {
+  if (context.length === 0) {
+    return JSON.stringify({
+      goal: 'Build a motion-activated alert system with buzzer or relay',
+      components_mentioned: ['PIR Sensor', 'Buzzer', 'Relay'],
+      missing_info: [
+        'Do you want to use a low-power microcontroller (like ESP32) or standard Arduino Uno?',
+        'Does the system need to switch high-voltage loads using a relay, or just sound a buzzer?',
+      ],
+      assumptions: [
+        'Assuming USB or battery power is available',
+        'Assuming indoor usage with a detection range of 5 metres',
+      ],
+    });
+  }
+  return JSON.stringify({
+    goal: 'Build a motion-activated alert system using an ESP32 and a relay',
+    components_mentioned: ['ESP32', 'PIR Sensor', 'Relay_Coil'],
+    missing_info: [],
+    assumptions: [
+      'Assuming USB 5 V power source',
+      'Assuming active-high signalling for the relay control',
+    ],
+  });
+}
+
+function mockCompareResponse(): string {
+  return JSON.stringify({
+    options: [
+      {
+        id: 'esp32-relay',
+        label: 'ESP32 Wi-Fi Relay Control',
+        components: ['ESP32', 'PIR_Sensor (Pin GPIO13)', 'Relay_Coil (Pin GPIO5)'],
+        tradeoffs: {
+          cost:        'Slightly higher due to ESP32 board cost (~£6 vs ~£3 for Uno).',
+          portability: 'Requires a stable 5 V supply for the relay coil.',
+          complexity:  'Medium complexity — raw relay coil needs a transistor driver circuit.',
+          power:       'Higher power consumption when relay coil is active (~70 mA).',
+        },
+        summary: 'Low-latency motion detection with Wi-Fi remote monitoring capability. Note: triggers VR-008 (Relay_Coil needs driver).',
+      },
+      {
+        id: 'arduino-buzzer',
+        label: 'Arduino Uno Passive Alert',
+        components: ['Arduino_Uno', 'PIR_Sensor (Pin D2)', 'Buzzer (Pin D3)'],
+        tradeoffs: {
+          cost:        'Very low cost — all components available for under £5.',
+          portability: 'Easy to run on a 9 V battery for 10+ hours.',
+          complexity:  'Very low complexity — beginner-friendly, no extra driver circuits.',
+          power:       'Low power consumption, ideal for battery-powered operation.',
+        },
+        summary: 'Simple audible alert using a piezo buzzer and PIR motion sensor on an Arduino Uno.',
+      },
+    ],
+  });
+}
+
+function mockPlanResponse(option: any): string {
+  const comps = (option?.components || []).map((c: string) => c.toLowerCase());
+  const hasRelay    = comps.some((c: string) => c.includes('relay'));
+  const hasPIR      = comps.some((c: string) => c.includes('pir'));
+  const hasHCSR04   = comps.some((c: string) => c.includes('hc-sr04') || c.includes('ultrasonic'));
+  const hasBuzzer   = comps.some((c: string) => c.includes('buzzer'));
+  const hasServo    = comps.some((c: string) => c.includes('servo'));
+
+  const inputName  = hasHCSR04 ? 'HC-SR04 ultrasonic sensor' : hasPIR ? 'PIR motion sensor' : 'input sensor';
+  const outputName = hasRelay  ? 'Relay'  : hasServo ? 'Servo Motor' : hasBuzzer ? 'Piezo Buzzer' : 'output device';
+
+  return JSON.stringify({
+    milestones: [
+      {
+        id: 'm1',
+        title: 'Hardware Setup on Breadboard',
+        description: `Wire the microcontroller, ${inputName}, and ${outputName} on the breadboard following the validated pin mapping. Power via USB only — no load switching yet.`,
+        depends_on: null,
+      },
+      {
+        id: 'm2',
+        title: 'Individual Component Test',
+        description: `Flash a test sketch to verify ${inputName} readings (Serial Monitor) and manually trigger the ${outputName}. Confirm no smoke or unexpected heating.`,
+        depends_on: 'm1',
+      },
+      {
+        id: 'm3',
+        title: 'Integrate System Logic',
+        description: `Combine ${inputName} reading with ${outputName} response. Implement threshold logic, debounce, and active/idle LED indicator.`,
+        depends_on: 'm2',
+      },
+      {
+        id: 'm4',
+        title: 'Calibrate & Tune',
+        description: 'Adjust sensor sensitivity and response timing. Run 50 trigger cycles and log any false positives. Fix edge cases.',
+        depends_on: 'm3',
+      },
+      {
+        id: 'm5',
+        title: 'Final Enclosure & Field Test',
+        description: 'Mount components in a project box. Label all connectors. Perform a 24-hour soak test before deployment.',
+        depends_on: 'm4',
+      },
+    ],
+  });
+}
+
+// ─── High-level call functions (with schema validation + retry) ───────────────
+
+async function callClarify(
+  provider: string,
+  userText: string,
+  context: ConversationTurn[],
+): Promise<object> {
+  if (!hasApiKey(provider)) {
+    console.warn(`[mock] API key missing for ${provider}. Returning mock clarify response.`);
+    const raw = mockClarifyResponse(context);
+    return JSON.parse(raw);
+  }
+
+  const fullHistory: ConversationTurn[] = [...context, { role: 'user', content: userText }];
+  const conversationBlock = fullHistory
+    .map((t) => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
+    .join('\n');
+
+  const userPrompt = context.length > 0
+    ? `This is a follow-up. Here is the conversation so far:\n${conversationBlock}\n\nUpdate the intent JSON based on the user's latest reply.`
+    : `User idea: "${userText}"`;
+
+  const result = await withSchemaValidation(
+    ZIntentObject,
+    () => rawClarifyCall(provider, userPrompt),
+    (err) => rawClarifyCall(provider,
+      `${userPrompt}\n\n[CORRECTION NEEDED] Your previous response failed schema validation: ${err}. Please return valid JSON matching: { "goal": string, "components_mentioned": string[], "missing_info": string[], "assumptions": string[] }`
+    ),
+    'clarify',
+  );
+
+  return result;
+}
+
+async function callCompare(
+  provider: string,
+  intent: object,
+): Promise<object[] | { __schema_error: true; message: string }> {
+  if (!hasApiKey(provider)) {
+    console.warn(`[mock] API key missing for ${provider}. Returning mock compare options.`);
+    const parsed = JSON.parse(mockCompareResponse());
+    return parsed.options;
+  }
+
+  const userPrompt = `Intent: ${JSON.stringify(intent, null, 2)}`;
+
+  const result = await withSchemaValidation(
+    ZCompareResponse,
+    () => rawCompareCall(provider, userPrompt),
+    (err) => rawCompareCall(provider,
+      `${userPrompt}\n\n[CORRECTION NEEDED] Your previous response failed schema validation: ${err}. Return EXACTLY 2 options as: { "options": [option1, option2] } with all required fields.`
+    ),
+    'compare',
+  );
+
+  if ('__schema_error' in result) return result;
+  return result.options;
+}
+
+async function callPlan(
+  provider: string,
+  option: object,
+): Promise<object[] | { __schema_error: true; message: string }> {
+  if (!hasApiKey(provider)) {
+    console.warn(`[mock] API key missing for ${provider}. Returning mock milestone plan.`);
+    const parsed = JSON.parse(mockPlanResponse(option));
+    return parsed.milestones;
+  }
+
+  const optionStr = JSON.stringify(option);
+
+  const result = await withSchemaValidation(
+    ZMilestonePlan,
+    () => rawPlanCall(provider, optionStr),
+    (err) => rawPlanCall(provider,
+      `${optionStr}\n\n[CORRECTION NEEDED] Your previous response failed schema validation: ${err}. Return 4–5 milestones as: { "milestones": [{ "id": string, "title": string, "description": string, "depends_on": string|null }] }`
+    ),
+    'plan',
+  );
+
+  if ('__schema_error' in result) return result;
+  return result.milestones;
 }
 
 // ─── Express app ──────────────────────────────────────────────────────────────
@@ -304,7 +550,6 @@ async function startServer() {
   app.use(express.json());
   const PORT = 3000;
 
-  // Helper: resolve provider from request header → env var → 'gemini'
   const resolveProvider = (req: express.Request): string =>
     (req.headers['x-ai-provider'] as string | undefined) ??
     process.env.AI_PROVIDER ??
@@ -324,6 +569,12 @@ async function startServer() {
       const provider = resolveProvider(req);
       console.log(`[clarify] provider=${provider} context_turns=${context.length}`);
       const result = await callClarify(provider, text, context);
+
+      // If schema validation failed, surface it explicitly to the client
+      if ('__schema_error' in (result as any)) {
+        res.status(422).json(result);
+        return;
+      }
       res.json(result);
     } catch (e: any) {
       console.error('[clarify] error:', e.message);
@@ -341,8 +592,13 @@ async function startServer() {
       }
       const provider = resolveProvider(req);
       console.log(`[compare] provider=${provider}`);
-      const options = await callCompare(provider, intent);
-      res.json(options);
+      const result = await callCompare(provider, intent);
+
+      if (!Array.isArray(result) && '__schema_error' in result) {
+        res.status(422).json(result);
+        return;
+      }
+      res.json(result);
     } catch (e: any) {
       console.error('[compare] error:', e.message);
       res.status(500).json({ error: e.message });
@@ -356,92 +612,13 @@ async function startServer() {
       const provider = resolveProvider(req);
       console.log(`[plan] provider=${provider}`);
 
-      if (!hasApiKey(provider)) {
-        console.warn(`[mock] API key missing for ${provider}. Returning mock milestone plan.`);
-        
-        // Find what components we have to customize the mock plan description dynamically
-        const comps = (option?.components || []).map((c: string) => c.toLowerCase());
-        const hasRelayCoil = comps.some((c: string) => c.includes("relay_coil") || c.includes("relay coil"));
-        const hasRelayModule = comps.some((c: string) => c.includes("relay_module") || c.includes("relay module"));
-        const hasPIR = comps.some((c: string) => c.includes("pir"));
-        const hasHCSR04 = comps.some((c: string) => c.includes("hc-sr04") || c.includes("ultrasonic") || c.includes("sr04"));
-        const hasBuzzer = comps.some((c: string) => c.includes("buzzer"));
-        const hasServo = comps.some((c: string) => c.includes("servo") || c.includes("sg90"));
-        
-        const inputName = hasHCSR04 ? "HC-SR04 ultrasonic sensor" : hasPIR ? "PIR motion sensor" : "input sensor";
-        const outputName = hasRelayCoil ? "Relay Coil" : hasRelayModule ? "Relay Module" : hasServo ? "Servo Motor" : hasBuzzer ? "Piezo Buzzer" : "output device";
+      const result = await callPlan(provider, option);
 
-        res.json([
-          {
-            id: "m1",
-            title: "Hardware Setup on Breadboard",
-            description: `Wire the microcontroller, ${inputName}, and ${outputName} on the breadboard following the pin mapping.`,
-            depends_on: null
-          },
-          {
-            id: "m2",
-            title: "Basic Component Test",
-            description: `Flash a test sketch to verify input readings from the ${inputName} and trigger the ${outputName}.`,
-            depends_on: "m1"
-          },
-          {
-            id: "m3",
-            title: "Integrate System Logic",
-            description: `Combine the ${inputName} reading logic with the ${outputName} response configurations.`,
-            depends_on: "m2"
-          },
-          {
-            id: "m4",
-            title: "Enclosure Assembly & Test",
-            description: "Mount the components into a custom box or 3D-printed enclosure and perform final stress testing.",
-            depends_on: "m3"
-          }
-        ]);
+      if (!Array.isArray(result) && '__schema_error' in result) {
+        res.status(422).json(result);
         return;
       }
-
-      const PLAN_SYSTEM = `Given a hardware architecture option, generate a milestone plan for building it (4-5 milestones).
-Milestones should progress: clarify requirements → source parts → breadboard first component → integrate logic → test.
-Output ONLY valid JSON: { "milestones": [ { id, title, description, depends_on } ] }`;
-
-      let milestones: object[];
-
-      if (provider === 'openai') {
-        const client = openaiClient();
-        const resp = await client.chat.completions.create({
-          model: 'gpt-4o',
-          response_format: { type: 'json_object' },
-          messages: [
-            { role: 'system', content: PLAN_SYSTEM },
-            { role: 'user', content: `Option: ${JSON.stringify(option)}` },
-          ],
-        });
-        const parsed = JSON.parse(resp.choices[0].message.content ?? '{"milestones":[]}');
-        milestones = parsed.milestones ?? [];
-      } else if (provider === 'anthropic') {
-        const client = anthropicClient();
-        const resp = await client.messages.create({
-          model: 'claude-opus-4-5',
-          max_tokens: 1024,
-          system: PLAN_SYSTEM,
-          messages: [{ role: 'user', content: `Option: ${JSON.stringify(option)}` }],
-        });
-        const text = resp.content[0].type === 'text' ? resp.content[0].text : '{"milestones":[]}';
-        const match = text.match(/\{[\s\S]*\}/);
-        const parsed = JSON.parse(match ? match[0] : '{"milestones":[]}');
-        milestones = parsed.milestones ?? [];
-      } else {
-        const ai = geminiClient();
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-pro',
-          contents: `${PLAN_SYSTEM}\n\nOption: ${JSON.stringify(option)}`,
-          config: { responseMimeType: 'application/json', responseSchema: milestonePlanSchema },
-        });
-        const parsed = JSON.parse(response.text ?? '{"milestones":[]}');
-        milestones = parsed.milestones ?? [];
-      }
-
-      res.json(milestones);
+      res.json(result);
     } catch (e: any) {
       console.error('[plan] error:', e.message);
       res.status(500).json({ error: e.message });
@@ -466,9 +643,10 @@ Output ONLY valid JSON: { "milestones": [ { id, title, description, depends_on }
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n✓ CircuitCraft server running at http://localhost:${PORT}`);
     console.log(`  Default AI provider: ${process.env.AI_PROVIDER ?? 'gemini'}`);
-    console.log(`  Gemini key set: ${!!process.env.GEMINI_API_KEY}`);
-    console.log(`  OpenAI key set: ${!!process.env.OPENAI_API_KEY}`);
+    console.log(`  Gemini key set:    ${!!process.env.GEMINI_API_KEY}`);
+    console.log(`  OpenAI key set:    ${!!process.env.OPENAI_API_KEY}`);
     console.log(`  Anthropic key set: ${!!process.env.ANTHROPIC_API_KEY}\n`);
+    console.log(`  Schema validation: Zod (retry-then-error on all 3 LLM call sites)\n`);
   });
 }
 

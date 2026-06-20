@@ -4,6 +4,8 @@ import type {
   ArchitectureOption,
   MilestonePlan,
   ClarifyStage,
+  PipelineState,
+  PipelineError,
   AIProvider,
 } from './types';
 import type { ValidationResult } from './data/components';
@@ -18,10 +20,11 @@ export interface ChatMessage {
    *   text         → plain markdown (default)
    *   clarify      → ClarifyCard — shows missing_info + assumptions
    *   options      → OptionCards — shows 2 architecture options with tradeoffs
-   *   validation   → ValidationCard — conflicts + warnings + approval gate
+   *   validation   → ValidationCard — violations + approval gate
    *   plan         → plain text pointing to Plan canvas
+   *   error        → ErrorCard — schema/API failure with optional retry
    */
-  type?: 'text' | 'clarify' | 'options' | 'validation' | 'plan';
+  type?: 'text' | 'clarify' | 'options' | 'validation' | 'plan' | 'error';
 }
 
 export interface SwapSimulation {
@@ -39,31 +42,32 @@ interface CircuitStore {
   aiProvider: AIProvider;
   setAiProvider: (p: AIProvider) => void;
 
-  // ── Global loading flag ───────────────────────────────────────────────────
-  isLoading: boolean;
+  // ── Pipeline State Machine ────────────────────────────────────────────────
+  // Single field — replaces all ad-hoc isLoading / approved / clarifyStage booleans.
+  // Transitions only via the named action methods below.
+  pipelineState: PipelineState;
+  pipelineError: PipelineError | null;
+
+  // Named transition actions (the only way to move between pipeline states)
+  transitionTo: (state: PipelineState, error?: PipelineError) => void;
+
+  // ── Derived compat accessors (read-only; drive existing UI components) ────
+  // These are computed from pipelineState so UI components don't need rewriting.
+  readonly isLoading: boolean;
+  readonly approved: boolean;
+  readonly clarifyStage: ClarifyStage;
+
+  // Keep setIsLoading as a no-op alias — real state is pipelineState
   setIsLoading: (v: boolean) => void;
+  setApproved: (approved: boolean) => void;
+  setClarifyStage: (s: ClarifyStage) => void;
 
   // ── Chat history ──────────────────────────────────────────────────────────
   messages: ChatMessage[];
   addMessage: (msg: ChatMessage) => void;
   clearMessages: () => void;
 
-  // ── Two-turn clarify flow ─────────────────────────────────────────────────
-  /**
-   * clarifyStage gates the reasoning loop:
-   *   idle                 → user has not submitted anything
-   *   waiting_clarification → LLM returned missing_info; waiting for user reply
-   *   clarifying           → second clarify call in flight
-   *   options_ready        → compare call returned 2 options; waiting for click
-   *   option_selected      → user clicked; comparison locked
-   */
-  clarifyStage: ClarifyStage;
-  setClarifyStage: (s: ClarifyStage) => void;
-
-  /**
-   * Conversation history sent back to the LLM on subsequent clarify turns.
-   * Grows with each user/assistant exchange so the LLM has full context.
-   */
+  // ── Clarify conversation context ──────────────────────────────────────────
   clarifyContext: { role: 'user' | 'assistant'; content: string }[];
   appendClarifyContext: (entry: { role: 'user' | 'assistant'; content: string }) => void;
   resetClarifyContext: () => void;
@@ -90,10 +94,7 @@ interface CircuitStore {
   currentMilestoneId: string | null;
   setCurrentMilestoneId: (id: string | null) => void;
 
-  // ── Module H: Human approval gate ────────────────────────────────────────
-  approved: boolean;
-  setApproved: (approved: boolean) => void;
-
+  // ── Module G: Generated code ──────────────────────────────────────────────
   generatedCode: string | null;
   setGeneratedCode: (code: string | null) => void;
 
@@ -107,14 +108,38 @@ interface CircuitStore {
   reset: () => void;
 }
 
-// ─── Initial state snapshot (used by reset()) ────────────────────────────────
+// ─── Pipeline state → derived compat values ───────────────────────────────────
+const LOADING_STATES: PipelineState[] = [
+  'CLARIFYING', 'OPTIONS_GENERATING', 'VALIDATING', 'PLAN_GENERATING',
+];
+// Only APPROVED state unlocks the overlays — AWAITING_APPROVAL does NOT.
+// This enforces Hard Rule 4: the user must explicitly click after reviewing the plan.
+const APPROVED_STATES: PipelineState[] = ['APPROVED'];
+
+function derivedClarifyStage(ps: PipelineState): ClarifyStage {
+  switch (ps) {
+    case 'IDLE':                return 'idle';
+    case 'AWAITING_CLARIFY':    return 'waiting_clarification';
+    case 'CLARIFYING':          return 'clarifying';
+    case 'OPTIONS_PRESENTED':   return 'options_ready';
+    case 'VALIDATION_BLOCKED':
+    case 'VALIDATED':
+    case 'PLAN_GENERATING':
+    case 'AWAITING_APPROVAL':
+    case 'APPROVED':            return 'option_selected';
+    default:                    return 'idle';
+  }
+}
+
+// ─── Initial state snapshot ──────────────────────────────────────────────────
 const INITIAL_STATE = {
   aiProvider: (
     (typeof window !== 'undefined'
       ? localStorage.getItem('cc_provider')
       : null) ?? 'gemini'
   ) as AIProvider,
-  isLoading: false,
+  pipelineState: 'IDLE' as PipelineState,
+  pipelineError: null as PipelineError | null,
   messages: [
     {
       role: 'assistant' as const,
@@ -122,23 +147,21 @@ const INITIAL_STATE = {
       type: 'text' as const,
     },
   ],
-  clarifyStage: 'idle' as ClarifyStage,
   clarifyContext: [] as { role: 'user' | 'assistant'; content: string }[],
   intent: null,
-  options: [],
-  selectedOptionId: null,
-  validation: null,
-  plan: null,
-  currentMilestoneId: null,
-  approved: false,
-  generatedCode: null,
+  options: [] as ArchitectureOption[],
+  selectedOptionId: null as string | null,
+  validation: null as ValidationResult | null,
+  plan: null as MilestonePlan | null,
+  currentMilestoneId: null as string | null,
+  generatedCode: null as string | null,
   swapSimulation: {
     active: false,
     originalComponent: null,
     replacementComponent: null,
     simulatedOption: null,
     simulatedValidation: null,
-    simulatedPlan: null
+    simulatedPlan: null,
   } as SwapSimulation,
 };
 
@@ -146,59 +169,95 @@ const INITIAL_STATE = {
 export const useCircuitStore = create<CircuitStore>((set, get) => ({
   ...INITIAL_STATE,
 
+  // ── Derived computed properties ─────────────────────────────────────────────
+  get isLoading() {
+    return LOADING_STATES.includes(get().pipelineState);
+  },
+  get approved() {
+    return APPROVED_STATES.includes(get().pipelineState);
+  },
+  get clarifyStage(): ClarifyStage {
+    return derivedClarifyStage(get().pipelineState);
+  },
+
+  // ── AI Provider ──────────────────────────────────────────────────────────────
   setAiProvider: (p) => {
     if (typeof window !== 'undefined') localStorage.setItem('cc_provider', p);
     set({ aiProvider: p });
   },
 
-  setIsLoading: (v) => set({ isLoading: v }),
+  // ── Pipeline state machine ────────────────────────────────────────────────────
+  transitionTo: (state, error) =>
+    set({ pipelineState: state, pipelineError: error ?? null }),
 
-  messages: INITIAL_STATE.messages,
+  // Compat setters — they update pipelineState where possible
+  setIsLoading: (_v) => {
+    // no-op: use transitionTo instead; kept for backward compat
+  },
+  setApproved: (approved) => {
+    if (approved) {
+      set({ pipelineState: 'APPROVED' });
+    }
+  },
+  setClarifyStage: (s: ClarifyStage) => {
+    // Map old ClarifyStage back to PipelineState
+    const map: Record<ClarifyStage, PipelineState> = {
+      'idle':                 'IDLE',
+      'clarifying':           'CLARIFYING',
+      'waiting_clarification':'AWAITING_CLARIFY',
+      'options_ready':        'OPTIONS_PRESENTED',
+      'option_selected':      'VALIDATED',
+    };
+    set({ pipelineState: map[s] ?? 'IDLE' });
+  },
+
+  // ── Chat ──────────────────────────────────────────────────────────────────────
   addMessage: (msg) => set((state) => ({ messages: [...state.messages, msg] })),
   clearMessages: () => set({ messages: INITIAL_STATE.messages }),
 
-  clarifyStage: INITIAL_STATE.clarifyStage,
-  setClarifyStage: (s) => set({ clarifyStage: s }),
-
-  clarifyContext: INITIAL_STATE.clarifyContext,
+  // ── Clarify context ───────────────────────────────────────────────────────────
   appendClarifyContext: (entry) =>
     set((state) => ({ clarifyContext: [...state.clarifyContext, entry] })),
   resetClarifyContext: () => set({ clarifyContext: [] }),
 
-  intent: null,
+  // ── Module B ─────────────────────────────────────────────────────────────────
   setIntent: (intent) => set({ intent }),
 
-  options: [],
+  // ── Module C ─────────────────────────────────────────────────────────────────
   setOptions: (options) => set({ options }),
-
-  selectedOptionId: null,
   setSelectedOptionId: (id) => set({ selectedOptionId: id, generatedCode: null }),
 
-  validation: null,
-  setValidation: (validation) => set({ validation }),
+  // ── Module E ─────────────────────────────────────────────────────────────────
+  setValidation: (validation) => {
+    if (validation) {
+      const hasConflicts = validation.violations.some(v => v.severity === 'conflict');
+      set({
+        validation,
+        pipelineState: hasConflicts ? 'VALIDATION_BLOCKED' : 'VALIDATED',
+      });
+    } else {
+      set({ validation });
+    }
+  },
 
-  plan: null,
-  setPlan: (plan) => set({ plan }),
-
-  currentMilestoneId: null,
+  // ── Module F ──────────────────────────────────────────────────────────────────────────────────
+  setPlan: (plan) =>
+    // Plan arriving → AWAITING_APPROVAL, NOT APPROVED.
+    // Overlays stay locked until the user clicks “Mark as Reviewed” (APPROVE_FINAL action).
+    set({ plan, pipelineState: plan ? 'AWAITING_APPROVAL' : get().pipelineState }),
   setCurrentMilestoneId: (id) => set({ currentMilestoneId: id }),
 
-  approved: false,
-  setApproved: (approved) => set({ approved }),
-
-  generatedCode: null,
+  // ── Module G ─────────────────────────────────────────────────────────────────
   setGeneratedCode: (generatedCode) => set({ generatedCode }),
 
-  swapSimulation: INITIAL_STATE.swapSimulation,
-
+  // ── What-If Swap Sandbox ──────────────────────────────────────────────────────
   startSwapSimulation: async (original, replacement) => {
     const { selectedOptionId, options, aiProvider } = get();
     const option = options.find((o) => o.id === selectedOptionId);
     if (!option) return;
 
-    set({ isLoading: true });
+    set({ pipelineState: 'VALIDATING' });
 
-    // Build replacement component name preserving pin parenthesis if any
     const pinMatch = original.match(/\(([^)]+)\)/);
     const suffix = pinMatch ? ` (${pinMatch[1]})` : '';
     const replacementStr = `${replacement}${suffix}`;
@@ -213,10 +272,8 @@ export const useCircuitStore = create<CircuitStore>((set, get) => ({
       label: `${option.label} (Swapped: ${replacement})`,
     };
 
-    // Run deterministic validation locally
     const simulatedValidation = validateArchitecture(simulatedOption);
 
-    // Call API (or mock fallback) for new plan
     try {
       const resPlan = await fetch('/api/plan', {
         method: 'POST',
@@ -230,6 +287,7 @@ export const useCircuitStore = create<CircuitStore>((set, get) => ({
       const simulatedPlan = { milestones };
 
       set({
+        pipelineState: 'VALIDATED',
         swapSimulation: {
           active: true,
           originalComponent: original,
@@ -242,6 +300,7 @@ export const useCircuitStore = create<CircuitStore>((set, get) => ({
     } catch (e: any) {
       console.error('Error simulating plan:', e);
       set({
+        pipelineState: 'VALIDATED',
         swapSimulation: {
           active: true,
           originalComponent: original,
@@ -252,8 +311,6 @@ export const useCircuitStore = create<CircuitStore>((set, get) => ({
         },
       });
     }
-
-    set({ isLoading: false });
   },
 
   applySwapSimulation: () => {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Puzzle, Archive, Bot, Send, MoreHorizontal, Wifi, RotateCcw, Shuffle, ArrowRight, GitCompare, AlertTriangle } from 'lucide-react';
+import { Search, Puzzle, Archive, Bot, Send, MoreHorizontal, Wifi, RotateCcw, Shuffle, ArrowRight, GitCompare, AlertTriangle, AlertCircle } from 'lucide-react';
 import type { NavTab } from '../types';
 import AssistantContent from './AssistantContent';
 import { useCircuitStore } from '../store';
@@ -21,11 +21,11 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
     setValidation,
     setPlan,
     setCurrentMilestoneId,
-    setIsLoading,
+    transitionTo,
     isLoading,
     aiProvider,
     clarifyStage,
-    setClarifyStage,
+    pipelineState,
     clarifyContext,
     appendClarifyContext,
     resetClarifyContext,
@@ -49,22 +49,24 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
   useEffect(() => {
     const handleSelectOption = async (e: Event) => {
       const { detail: option } = e as CustomEvent;
-      // Validation is deterministic — no LLM call. See src/data/components.ts.
+      // Validation is deterministic — zero LLM calls. See src/data/components.ts.
+      transitionTo('VALIDATING');
       const valResult = validateArchitecture(option);
+      // setValidation automatically transitions pipelineState to VALIDATED or VALIDATION_BLOCKED
       setValidation(valResult);
-      // Stage gates: option_selected means user clicked, now pending approval
-      setClarifyStage('option_selected');
-      const warningLines = valResult.warnings.length > 0
-        ? `\n\n**Warnings** (acknowledge before approving):\n${valResult.warnings.map(w => `\u2022 ${w}`).join('\n')}`
+
+      const conflicts = valResult.violations.filter(v => v.severity === 'conflict');
+      const warnings  = valResult.violations.filter(v => v.severity === 'warning');
+
+      const issueLines = valResult.violations.length > 0
+        ? `\n\n${valResult.violations.map(v => `**[${v.ruleId}]** ${v.message}`).join('\n\n')}`
         : '';
-      const conflictLines = valResult.conflicts.length > 0
-        ? `\n\n**Conflicts** (must resolve — cannot approve):\n${valResult.conflicts.map(c => `\u2022 ${c}`).join('\n')}`
-        : '';
+
       addMessage({
         role: 'assistant',
-        content: valResult.valid
-          ? `**Validation passed** \u2713${warningLines}\n\nClick **Approve & Generate Plan** below to generate your build roadmap.`
-          : `**Validation found conflicts** \u2014 resolve these before approving:${conflictLines}`,
+        content: conflicts.length === 0
+          ? `**DRC validation passed** ✓ — ${warnings.length > 0 ? `${warnings.length} warning(s) to review before approving.` : 'No issues found.'} ${issueLines}\n\nClick **Approve & Generate Plan** below to generate your build roadmap.`
+          : `**DRC found ${conflicts.length} conflict(s)** — resolve these before approving:${issueLines}`,
         type: 'validation',
       });
     };
@@ -74,7 +76,7 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
       const option = options.find((o) => o.id === selectedOptionId);
       if (!option) return;
 
-      setIsLoading(true);
+      transitionTo('PLAN_GENERATING');
       try {
         const resPlan = await fetch('/api/plan', {
           method: 'POST',
@@ -84,22 +86,40 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
           },
           body: JSON.stringify({ option }),
         });
+
+        // Handle schema validation errors (HTTP 422) from server
+        if (resPlan.status === 422) {
+          const errBody = await resPlan.json();
+          transitionTo('ERROR', {
+            stage: 'plan',
+            message: errBody.message ?? 'The plan AI response failed schema validation twice.',
+            retryable: true,
+          });
+          addMessage({
+            role: 'assistant',
+            content: errBody.message ?? 'The AI returned a malformed plan response. Please try again.',
+            type: 'error',
+          });
+          return;
+        }
+
+        if (!resPlan.ok) throw new Error(`Plan API error: ${resPlan.status}`);
         const milestones = await resPlan.json();
         const plan = { milestones };
         setPlan(plan);
-        // Lock the active milestone to M1 — renderers only show M1 scope
         if (milestones.length > 0) {
           setCurrentMilestoneId(milestones[0].id);
         }
+        transitionTo('AWAITING_APPROVAL');
         addMessage({
           role: 'assistant',
-          content: `Your milestone plan is ready — **${milestones.length} steps** are visible in the **Plan** view.\n\nThe diagram and code panels now show **Milestone 1 only**: ${milestones[0]?.title ?? '—'}. Complete each milestone before advancing.`,
+          content: `Your milestone plan is ready — **${milestones.length} steps** are visible in the **Plan** view.\n\n→ Switch to the **Plan** tab, review all milestones, then click **Mark as Reviewed** to unlock the diagram and code panels.`,
           type: 'plan',
         });
       } catch (e: any) {
-        addMessage({ role: 'assistant', content: `Error generating plan: ${e.message}`, type: 'text' });
+        transitionTo('ERROR', { stage: 'plan', message: e.message, retryable: true });
+        addMessage({ role: 'assistant', content: `Error generating plan: ${e.message}`, type: 'error' });
       }
-      setIsLoading(false);
     };
 
     window.addEventListener('SELECT_OPTION', handleSelectOption);
@@ -110,7 +130,7 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
     };
   }, []);
 
-  // ── Core submit handler — two-turn state machine ──────────────────────────
+  // ── Core submit handler — named pipeline state machine ────────────────────
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const text = inputText.trim();
@@ -118,19 +138,13 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
 
     setInputText('');
     addMessage({ role: 'user', content: text });
-    setIsLoading(true);
 
     const currentStage = clarifyStage;
 
     try {
-      // ── STEP 1: Clarify call (always runs on first and follow-up turns) ────
-      // Decide what context to send back:
-      //   - First turn: empty context, fresh idea
-      //   - Follow-up turn: existing clarifyContext so LLM has conversation history
-      const context =
-        currentStage === 'waiting_clarification' ? clarifyContext : [];
-
-      setClarifyStage('clarifying');
+      // ── STEP 1: Clarify call ───────────────────────────────────────────────
+      const context = currentStage === 'waiting_clarification' ? clarifyContext : [];
+      transitionTo('CLARIFYING');
 
       console.log(`[flow] clarify — stage=${currentStage} provider=${aiProvider} context_turns=${context.length}`);
 
@@ -143,11 +157,26 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
         body: JSON.stringify({ text, context }),
       });
 
+      // Handle schema validation error (HTTP 422) from server
+      if (resClarify.status === 422) {
+        const errBody = await resClarify.json();
+        transitionTo('ERROR', {
+          stage: 'clarify',
+          message: errBody.message ?? 'The AI returned a malformed clarify response.',
+          retryable: true,
+        });
+        addMessage({
+          role: 'assistant',
+          content: errBody.message ?? 'The AI returned a malformed response. Please try again.',
+          type: 'error',
+        });
+        return;
+      }
+
       if (!resClarify.ok) throw new Error(`Clarify API error: ${resClarify.status}`);
       const newIntent = await resClarify.json();
       setIntent(newIntent);
 
-      // Append this exchange to context for potential next turn
       appendClarifyContext({ role: 'user', content: text });
       appendClarifyContext({
         role: 'assistant',
@@ -158,19 +187,15 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
 
       // ── STEP 2: Decision point ─────────────────────────────────────────────
       if (newIntent.missing_info && newIntent.missing_info.length > 0) {
-        // Still have unresolved questions → show clarify card and STOP
         addMessage({
           role: 'assistant',
           content: `I understand your goal: **${newIntent.goal}**\n\nBefore I propose options, I need a bit more detail:`,
           type: 'clarify',
         });
-        setClarifyStage('waiting_clarification');
-        setIsLoading(false);
+        transitionTo('AWAITING_CLARIFY');
         return; // ← HARD STOP — do NOT call /api/compare yet
       }
 
-      // All info gathered (either first turn had enough, or follow-up resolved it)
-      // Show a brief acknowledgement of the assumptions we are carrying forward
       const assumptionNote =
         newIntent.assumptions.length > 0
           ? `\n\nAssumptions I'm carrying forward: ${newIntent.assumptions.join('; ')}.`
@@ -183,6 +208,7 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
       });
 
       // ── STEP 3: Compare call ───────────────────────────────────────────────
+      transitionTo('OPTIONS_GENERATING');
       console.log(`[flow] compare — provider=${aiProvider}`);
 
       const resCompare = await fetch('/api/compare', {
@@ -194,6 +220,22 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
         body: JSON.stringify({ intent: newIntent }),
       });
 
+      // Handle schema validation error (HTTP 422)
+      if (resCompare.status === 422) {
+        const errBody = await resCompare.json();
+        transitionTo('ERROR', {
+          stage: 'compare',
+          message: errBody.message ?? 'The AI returned malformed architecture options.',
+          retryable: true,
+        });
+        addMessage({
+          role: 'assistant',
+          content: errBody.message ?? 'The AI returned a malformed response. Please try again.',
+          type: 'error',
+        });
+        return;
+      }
+
       if (!resCompare.ok) throw new Error(`Compare API error: ${resCompare.status}`);
       const options = await resCompare.json();
 
@@ -202,26 +244,23 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
       }
 
       setOptions(options);
-      resetClarifyContext(); // context no longer needed once we have options
-      setClarifyStage('options_ready');
+      resetClarifyContext();
+      transitionTo('OPTIONS_PRESENTED');
 
       addMessage({
         role: 'assistant',
-        content: 'Here are two architectures with genuine tradeoffs. **Select one to continue** — once you pick, I will run the deterministic validation engine against the component spec table.',
+        content: 'Here are two architectures with genuine tradeoffs. **Select one to continue** — once you pick, I will run the deterministic DRC validation engine against the component spec table (no AI involved).',
         type: 'options',
       });
     } catch (e: any) {
       console.error('[flow] error:', e);
+      transitionTo('ERROR', { stage: 'submit', message: e.message, retryable: true });
       addMessage({
         role: 'assistant',
         content: `Something went wrong: ${e.message}. Check the console for details and ensure your API key is set.`,
-        type: 'text',
+        type: 'error',
       });
-      // Reset to idle so the user can try again
-      setClarifyStage('idle');
     }
-
-    setIsLoading(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -241,10 +280,15 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
           : 'Describe your idea…';
 
   // Input is disabled while loading, while waiting for option selection, or while pending approval
-  // Once approved the user can ask follow-up questions
-  const inputDisabled = isLoading ||
-    clarifyStage === 'options_ready' ||
-    (clarifyStage === 'option_selected' && !approved);
+  // Once APPROVED the user can ask follow-up questions
+  const inputDisabled =
+    isLoading ||
+    pipelineState === 'OPTIONS_PRESENTED' ||
+    pipelineState === 'OPTIONS_GENERATING' ||
+    (pipelineState === 'VALIDATING') ||
+    (pipelineState === 'VALIDATION_BLOCKED' && !approved) ||
+    (pipelineState === 'VALIDATED' && !approved) ||
+    pipelineState === 'AWAITING_APPROVAL';  // locked until user clicks Mark as Reviewed
 
   return (
     <div className="w-[24%] border-r border-outline-variant flex flex-col bg-surface min-w-[280px]">
@@ -518,19 +562,21 @@ function WhatIfSandbox() {
                     {validation?.valid ? 'Validated' : 'Requires Review'}
                   </span>
                 </div>
-                {validation?.warnings.map((w, i) => (
+                {validation?.violations.filter(v => v.severity === 'warning').map((v, i) => (
                   <div key={i} className="text-tertiary bg-tertiary/10 p-1.5 rounded flex gap-1 items-start text-[10px]">
                     <AlertTriangle size={10} className="shrink-0 mt-0.5" />
-                    <span>{w}</span>
+                    <span className="font-mono text-[9px] font-bold mr-0.5">[{v.ruleId}]</span>
+                    <span>{v.message}</span>
                   </div>
                 ))}
-                {validation?.conflicts.map((c, i) => (
+                {validation?.violations.filter(v => v.severity === 'conflict').map((v, i) => (
                   <div key={i} className="text-error bg-error/10 p-1.5 rounded flex gap-1 items-start text-[10px]">
-                    <AlertTriangle size={10} className="shrink-0 mt-0.5" />
-                    <span>{c}</span>
+                    <AlertCircle size={10} className="shrink-0 mt-0.5" />
+                    <span className="font-mono text-[9px] font-bold mr-0.5">[{v.ruleId}]</span>
+                    <span>{v.message}</span>
                   </div>
                 ))}
-                {validation?.warnings.length === 0 && validation?.conflicts.length === 0 && (
+                {validation?.violations.length === 0 && (
                   <span className="text-on-surface-variant pl-1 italic">No issues.</span>
                 )}
               </div>
@@ -543,20 +589,22 @@ function WhatIfSandbox() {
                     {swapSimulation.simulatedValidation?.valid ? 'Validated' : 'Requires Review'}
                   </span>
                 </div>
-                {swapSimulation.simulatedValidation?.warnings.map((w, i) => (
+                {swapSimulation.simulatedValidation?.violations.filter(v => v.severity === 'warning').map((v, i) => (
                   <div key={i} className="text-tertiary bg-tertiary/10 p-1.5 rounded flex gap-1 items-start text-[10px] animate-pulse">
                     <AlertTriangle size={10} className="shrink-0 mt-0.5" />
-                    <span>{w}</span>
+                    <span className="font-mono text-[9px] font-bold mr-0.5">[{v.ruleId}]</span>
+                    <span>{v.message}</span>
                   </div>
                 ))}
-                {swapSimulation.simulatedValidation?.conflicts.map((c, i) => (
+                {swapSimulation.simulatedValidation?.violations.filter(v => v.severity === 'conflict').map((v, i) => (
                   <div key={i} className="text-error bg-error/10 p-1.5 rounded flex gap-1 items-start text-[10px] animate-pulse">
-                    <AlertTriangle size={10} className="shrink-0 mt-0.5" />
-                    <span>{c}</span>
+                    <AlertCircle size={10} className="shrink-0 mt-0.5" />
+                    <span className="font-mono text-[9px] font-bold mr-0.5">[{v.ruleId}]</span>
+                    <span>{v.message}</span>
                   </div>
                 ))}
-                {swapSimulation.simulatedValidation?.warnings.length === 0 && swapSimulation.simulatedValidation?.conflicts.length === 0 && (
-                  <span className="text-secondary pl-1 font-mono text-[10px] font-bold">✓ 0 conflicts, 0 warnings</span>
+                {swapSimulation.simulatedValidation?.violations.length === 0 && (
+                  <span className="text-secondary pl-1 font-mono text-[10px] font-bold">✓ All DRC rules passed</span>
                 )}
               </div>
             </div>

@@ -137,4 +137,30 @@ arduinoGenerator.forBlock['hardware_LCD_I2C'] = function(block: any, generator: 
   return `  lcd.clear();\n  lcd.setCursor(0, 0);\n  lcd.print("${line1}");\n  lcd.setCursor(0, 1);\n  lcd.print("${line2}");\n  delay(2000);\n`;
 };
 
+// 11. OLED_I2C Block generator
+arduinoGenerator.forBlock['hardware_OLED_I2C'] = function(block: any, generator: any) {
+  const sda = block.getFieldValue('SDA_PIN');
+  const scl = block.getFieldValue('SCL_PIN');
+  const line1 = block.getFieldValue('LINE_1') || '';
+  const line2 = block.getFieldValue('LINE_2') || '';
+
+  generator.includeLines_.push('#include <Wire.h>');
+  generator.includeLines_.push('#include <Adafruit_GFX.h>');
+  generator.includeLines_.push('#include <Adafruit_SSD1306.h>');
+  generator.includeLines_.push('Adafruit_SSD1306 display(128, 64, &Wire, -1);');
+
+  generator.setupLines_.push(`Wire.begin(${sda}, ${scl});`);
+  generator.setupLines_.push('if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { Serial.println(F("SSD1306 allocation failed")); }');
+  generator.setupLines_.push('display.clearDisplay();');
+  generator.setupLines_.push('display.setTextColor(SSD1306_WHITE);');
+
+  return `  display.clearDisplay();\n` +
+         `  display.setCursor(0, 0);\n` +
+         `  display.setTextSize(1);\n` +
+         `  display.println("${line1}");\n` +
+         `  display.println("${line2}");\n` +
+         `  display.display();\n` +
+         `  delay(2000);\n`;
+};
+
 export default arduinoGenerator;

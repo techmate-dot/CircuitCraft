@@ -7,7 +7,7 @@ import 'reactflow/dist/style.css';
 import { useRef, useEffect } from 'react';
 import * as Blockly from 'blockly';
 import arduinoGenerator from '../lib/arduinoGenerator';
-import { findSpec, COMPONENTS } from '../data/components';
+import { findSpec, COMPONENTS, BOARD_PROFILES } from '../data/components';
 
 interface CenterPanelProps {
   view: CenterView;
@@ -152,16 +152,17 @@ const registerCustomBlocks = () => {
       }) || [];
       
       const hostBoardName = boardComponents.length > 0 ? findSpec(boardComponents[0])?.name : 'ESP32';
-      const boardSpec = COMPONENTS.find(c => c.name === hostBoardName) || COMPONENTS.find(c => c.name === 'ESP32')!;
+      // v2: use BoardProfile.pins instead of deprecated ComponentSpec.available_pins
+      const boardProfile = BOARD_PROFILES.find(b => b.name === hostBoardName) ?? BOARD_PROFILES.find(b => b.name === 'ESP32')!;
       
       const spec = findSpec(compName);
       if (!spec) {
         return [['None', 'None']];
       }
       
-      const pins = boardSpec.available_pins || [];
-      const compatiblePins = pins.filter(p => 
-        p.types.some(t => spec.pin_types_supported.includes(t as any))
+      const pins = boardProfile.pins.filter(p => !p.reserved);
+      const compatiblePins = pins.filter(p =>
+        p.types.some(t => spec.pin_types_required.includes(t as any))
       );
       
       if (compatiblePins.length === 0) {
@@ -357,6 +358,26 @@ const registerCustomBlocks = () => {
       this.setNextStatement(true, null);
       this.setColour("#d4af37");
       this.setTooltip("16x2 character LCD with I2C interface");
+    }
+  };
+
+  Blockly.Blocks['hardware_OLED_I2C'] = {
+    init: function(this: any) {
+      this.appendDummyInput()
+          .appendField("OLED I2C SDA")
+          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('OLED_I2C')), "SDA_PIN")
+          .appendField("SCL")
+          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('OLED_I2C')), "SCL_PIN");
+      this.appendDummyInput()
+          .appendField("Line 1")
+          .appendField(new (Blockly as any).FieldTextInput("System OK"), "LINE_1");
+      this.appendDummyInput()
+          .appendField("Line 2")
+          .appendField(new (Blockly as any).FieldTextInput("Active"), "LINE_2");
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour("#d4af37");
+      this.setTooltip("128x64 SSD1306 OLED display with I2C interface");
     }
   };
 };
@@ -558,7 +579,7 @@ function BlocksCanvas() {
         processed.add(spec.name);
 
         const defaultFields: any = {};
-        if (spec.name === 'LCD_I2C') {
+        if (spec.name === 'LCD_I2C' || spec.name === 'OLED_I2C') {
           const boardComp = selectedOption.components.find((c: string) => {
             const s = findSpec(c);
             return s && s.is_microcontroller;
@@ -566,8 +587,8 @@ function BlocksCanvas() {
           const isUno = boardComp && findSpec(boardComp)?.name === 'Arduino_Uno';
           defaultFields['SDA_PIN'] = isUno ? 'A4' : 'GPIO21';
           defaultFields['SCL_PIN'] = isUno ? 'A5' : 'GPIO22';
-          defaultFields['LINE_1'] = 'Temp & Humid';
-          defaultFields['LINE_2'] = 'Monitoring...';
+          defaultFields['LINE_1'] = spec.name === 'LCD_I2C' ? 'Temp & Humid' : 'System OK';
+          defaultFields['LINE_2'] = spec.name === 'LCD_I2C' ? 'Monitoring...' : 'Active';
         } else {
           if (a.pin !== 'UNASSIGNED') {
             defaultFields['PIN'] = a.pin;
@@ -673,13 +694,13 @@ function BlocksCanvas() {
         <ConfidenceBadge confidence={confidence} />
       </div>
 
-      {approved && confidence === 'verify_manually' && validation?.warnings && (
+      {approved && confidence === 'verify_manually' && validation?.violations && (
         <div className="absolute top-10 left-4 right-4 z-10 p-3 rounded-lg border border-tertiary/40 bg-tertiary/8 flex items-start gap-2 backdrop-blur">
           <ShieldAlert size={14} className="text-tertiary mt-0.5 shrink-0" />
           <div className="flex flex-col gap-0.5">
             <span className="font-mono text-[10px] font-bold text-tertiary uppercase tracking-wide">Warnings acknowledged</span>
-            {validation.warnings.map((w, i) => (
-              <span key={i} className="text-[11px] text-tertiary font-mono">· {w}</span>
+            {validation.violations.filter(v => v.severity === 'warning').map((v, i) => (
+              <span key={i} className="text-[11px] text-tertiary font-mono">· [{v.ruleId}] {v.message}</span>
             ))}
           </div>
         </div>
