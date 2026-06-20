@@ -98,7 +98,12 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
           type: 'plan',
         });
       } catch (e: any) {
-        addMessage({ role: 'assistant', content: `Error generating plan: ${e.message}`, type: 'text' });
+        console.error('[plan] error:', e);
+        addMessage({ 
+          role: 'assistant', 
+          content: 'I ran into an issue generating your plan. Please double-check your API key and try again.', 
+          type: 'text' 
+        });
       }
       setIsLoading(false);
     };
@@ -215,7 +220,7 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
       console.error('[flow] error:', e);
       addMessage({
         role: 'assistant',
-        content: `Something went wrong: ${e.message}. Check the console for details and ensure your API key is set.`,
+        content: "I'm having trouble connecting to the AI service right now. Please double-check that your API key is valid and try again.",
         type: 'text',
       });
       // Reset to idle so the user can try again
