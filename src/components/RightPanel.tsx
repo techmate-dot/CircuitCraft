@@ -53,7 +53,7 @@ export default function RightPanel({ activeTab, setActiveTab }: RightPanelProps)
   const confidence = validation?.confidence ?? 'verify_manually';
 
   return (
-    <div className="w-[30%] border-l border-outline-variant flex flex-col bg-surface min-w-[320px]">
+    <div className="w-full h-full border-l border-outline-variant flex flex-col bg-surface">
       {/* Tabbed Header */}
       <div className="h-12 border-b border-outline-variant flex items-end px-2 shrink-0 bg-surface-container-low gap-2">
         {(['code', 'mapping', 'guide'] as RightTab[]).map(tab => (
