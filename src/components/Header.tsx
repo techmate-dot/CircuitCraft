@@ -1,16 +1,16 @@
 import { Play, Cpu, Wifi, Settings } from 'lucide-react';
 import ProviderSelector from './ProviderSelector';
+import brandLogo from '../../assets/circuitcraft_dark_ui_logo.svg';
 
 export default function Header() {
   return (
     <header className="bg-surface border-b border-outline-variant flex justify-between items-center w-full px-panel-padding h-12 z-50 shrink-0">
-      <div className="flex items-center gap-lg">
-        <span className="font-display text-[24px] font-bold text-on-surface leading-[32px] tracking-[-0.02em]">CircuitCraft</span>
-        <div className="hidden md:flex gap-md h-12">
-          <a className="flex items-center h-full px-sm border-b-2 border-secondary text-secondary text-sm" href="#">
-            ESP32 DevKit v1
-          </a>
-        </div>
+      <div className="flex items-center">
+        <img
+          src={brandLogo}
+          alt="CircuitCraft"
+          className="h-10 w-auto max-w-[220px] object-contain block"
+        />
       </div>
       <div className="flex items-center gap-md">
         {/* AI provider selector — shows which general-purpose LLM API is active */}
@@ -31,10 +31,10 @@ export default function Header() {
           </button>
           <div className="w-[1px] h-6 bg-outline-variant mx-sm"></div>
           <div className="h-[32px] w-[32px] rounded-full bg-surface-container overflow-hidden border border-outline-variant">
-            <img 
-              className="w-full h-full object-cover" 
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuA6CXyZOqEfHwUNGlYj69k_G2lePXjfelVreGsJG3KmU7PiY4bZ6-0_1jFJTlFXp_EOqAMNIgSw-mqmcEnnWNWtNT6C5FoiY9McjE55_u1_HFV6wH6Rn0TIdYV8eL5ForGeex9PQPBwjWPgxfZsfPDbJNXfJjUgutKK1IDLMXss7mJWI1hHvkpBmDIgGWwdArLxp8c9X4MAGIdI-Emk55nvNma3cv4mrKNtVuWj3zaFOOq1R-U8JsFADbwSm5L0YuqEXCU6SpiHxCM" 
-              alt="User" 
+            <img
+              className="w-full h-full object-cover"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuA6CXyZOqEfHwUNGlYj69k_G2lePXjfelVreGsJG3KmU7PiY4bZ6-0_1jFJTlFXp_EOqAMNIgSw-mqmcEnnWNWtNT6C5FoiY9McjE55_u1_HFV6wH6Rn0TIdYV8eL5ForGeex9PQPBwjWPgxfZsfPDbJNXfJjUgutKK1IDLMXss7mJWI1hHvkpBmDIgGWwdArLxp8c9X4MAGIdI-Emk55nvNma3cv4mrKNtVuWj3zaFOOq1R-U8JsFADbwSm5L0YuqEXCU6SpiHxCM"
+              alt="User"
             />
           </div>
         </div>
