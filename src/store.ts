@@ -8,7 +8,7 @@ import type {
   PipelineError,
   AIProvider,
 } from './types';
-import type { ValidationResult } from './data/components';
+import type { ValidationResult, ComponentSpec } from './data/components';
 import { validateArchitecture } from './data/components';
 
 // ─── Chat message shape ───────────────────────────────────────────────────────
@@ -98,6 +98,19 @@ interface CircuitStore {
   generatedCode: string | null;
   setGeneratedCode: (code: string | null) => void;
 
+  // ── Runtime block registry ────────────────────────────────────────────────
+  // Components added on-demand (via the Generate Block panel) at runtime.
+  // These extend the static COMPONENTS table without requiring a code change.
+  customComponents: ComponentSpec[];
+  addCustomComponent: (spec: ComponentSpec) => void;
+
+  // ── Workspace snapshot ─────────────────────────────────────────────────────
+  // Serialised Blockly workspace state captured once per debounced change.
+  // The simulator (Section 5) restores this in a sandboxed iframe so it never
+  // needs to re-traverse the live workspace — single traversal, two consumers.
+  workspaceState: object | null;
+  setWorkspaceState: (state: object | null) => void;
+
   // ── Module I: What-If Swap Sandbox (Stretch) ─────────────────────────────
   swapSimulation: SwapSimulation;
   startSwapSimulation: (original: string, replacement: string) => Promise<void>;
@@ -158,6 +171,8 @@ const INITIAL_STATE = {
   plan: null as MilestonePlan | null,
   currentMilestoneId: null as string | null,
   generatedCode: null as string | null,
+  customComponents: [] as ComponentSpec[],
+  workspaceState: null as object | null,
   swapSimulation: {
     active: false,
     originalComponent: null,
@@ -256,6 +271,13 @@ export const useCircuitStore = create<CircuitStore>((_set, get) => {
 
   // ── Module G ─────────────────────────────────────────────────────────────────
   setGeneratedCode: (generatedCode) => set({ generatedCode }),
+
+  // ── Runtime block registry ────────────────────────────────────────────────────
+  addCustomComponent: (spec) =>
+    set((state) => ({ customComponents: [...state.customComponents, spec] })),
+
+  // ── Workspace snapshot ────────────────────────────────────────────────────────
+  setWorkspaceState: (workspaceState) => set({ workspaceState }),
 
   // ── What-If Swap Sandbox ──────────────────────────────────────────────────────
   startSwapSimulation: async (original, replacement) => {

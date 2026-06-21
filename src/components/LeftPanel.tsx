@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Puzzle, Archive, Bot, Send, MoreHorizontal, Wifi, RotateCcw, Shuffle, ArrowRight, GitCompare, AlertTriangle, AlertCircle, ChevronDown } from 'lucide-react';
+import { Search, Puzzle, Archive, Bot, Send, MoreHorizontal, RotateCcw, Shuffle, ArrowRight, GitCompare, AlertTriangle, AlertCircle, ChevronDown, Cpu } from 'lucide-react';
 import type { NavTab } from '../types';
 import AssistantContent from './AssistantContent';
+import LogicPanel from './LogicPanel';
+import HardwarePanel from './HardwarePanel';
 import { useCircuitStore } from '../store';
 import { validateArchitecture, findSpec, COMPONENTS } from '../data/components';
 import localContext from '../data/localContext.json';
@@ -306,6 +308,11 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
               <Puzzle size={18} />
               <span className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase">Logic Blocks</span>
             </>
+          ) : activeNav === 'hardware' ? (
+            <>
+              <Cpu size={18} />
+              <span className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase">Hardware</span>
+            </>
           ) : (
             <>
               <Bot size={18} />
@@ -324,14 +331,18 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
             </button>
           )}
           <button className="text-on-surface-variant hover:text-on-surface p-1">
-            {activeNav === 'logic' ? <Search size={18} /> : <MoreHorizontal size={18} />}
+            {(activeNav === 'logic' || activeNav === 'hardware') ? <Search size={18} /> : <MoreHorizontal size={18} />}
           </button>
         </div>
       </div>
 
-      {/* Scrollable chat area */}
+      {/* Scrollable content area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-panel-padding flex flex-col gap-lg">
-        {activeNav === 'logic' ? <LogicContent /> : <AssistantContent />}
+        {activeNav === 'logic'
+          ? <LogicPanel />
+          : activeNav === 'hardware'
+            ? <HardwarePanel />
+            : <AssistantContent />}
       </div>
 
       {/* Input area (assistant tab only) */}
@@ -675,51 +686,3 @@ function WhatIfSandbox() {
   );
 }
 
-// ─── Logic panel content ──────────────────────────────────────────────────────
-function LogicContent() {
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-2 pb-4 border-b border-outline-variant">
-        {[
-          { label: 'Output', color: 'bg-secondary' },
-          { label: 'Input', color: 'bg-tertiary' },
-          { label: 'Control', color: 'bg-error' },
-          { label: 'Math', color: 'bg-[#4ae176]' },
-          { label: 'Variables', color: 'bg-[#c678dd]' },
-        ].map((cat) => (
-          <div key={cat.label} className="flex items-center gap-2 p-1 hover:bg-surface-container rounded cursor-pointer">
-            <div className={`w-3 h-3 rounded-full ${cat.color}`} />
-            <span className="font-mono text-[11px] uppercase tracking-[0.05em] text-on-surface">{cat.label}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <div className="font-mono text-[10px] text-on-surface-variant uppercase tracking-wider">Hardware Blocks</div>
-
-        <div className="bg-secondary/20 border border-secondary/30 p-2 rounded flex flex-col gap-1 cursor-grab active:cursor-grabbing">
-          <div className="flex items-center justify-between">
-            <span className="font-mono text-[13px] text-secondary">set built-in LED to</span>
-            <div className="bg-surface px-1 py-[2px] rounded border border-outline-variant text-[10px] text-on-surface">HIGH</div>
-          </div>
-        </div>
-
-        <div className="bg-tertiary/20 border border-tertiary/30 p-2 rounded flex flex-col gap-1 cursor-grab active:cursor-grabbing">
-          <div className="flex items-center justify-between">
-            <span className="font-mono text-[13px] text-tertiary">read distance (cm)</span>
-            <Wifi size={14} className="text-tertiary" />
-          </div>
-        </div>
-
-        <div className="bg-secondary/20 border border-secondary/30 p-2 rounded flex flex-col gap-1 cursor-grab active:cursor-grabbing">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-[13px] text-secondary">set pin</span>
-            <div className="bg-surface px-1 py-[2px] rounded border border-outline-variant text-[10px] text-on-surface">5</div>
-            <span className="font-mono text-[13px] text-secondary">to</span>
-            <div className="bg-surface px-1 py-[2px] rounded border border-outline-variant text-[10px] text-on-surface">HIGH</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}

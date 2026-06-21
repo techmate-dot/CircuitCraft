@@ -118,7 +118,46 @@ const ZMilestonePlan = z.object({
   milestones: z.array(ZMilestone).min(4).max(5),
 });
 
+// ComponentSpec schema for on-demand block generation (/api/spec)
+// AI produces component *metadata* only — the block shape and code template are
+// derived deterministically from this data by registerRuntimeBlock.ts.
+const ZComponentSpec = z.object({
+  name: z.string().min(1).regex(/^[A-Za-z0-9_-]+$/, 'name must use alphanumeric chars, underscores, or hyphens only'),
+  category: z.enum(['Sensors', 'Actuators', 'Power', 'Control']),
+  pin_types_required: z.array(z.enum(['digital', 'analog', 'pwm', 'i2c', 'interrupt'])).min(1),
+  voltage: z.number().positive().max(48),
+  current_ma: z.number().positive().max(5000),
+  requires_driver: z.boolean(),
+  notes: z.string().min(1),
+  simulation: z.object({
+    visual: z.enum(['led', 'servo_arm', 'buzzer_wave', 'generic_readout']),
+    defaultSimulatedValue: z.union([z.number(), z.boolean()]).optional(),
+  }).optional(),
+});
+
 // ─── Gemini JSON schemas (for structured output) ──────────────────────────────
+const componentSpecSchema: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    name:               { type: Type.STRING },
+    category:           { type: Type.STRING },
+    pin_types_required: { type: Type.ARRAY, items: { type: Type.STRING } },
+    voltage:            { type: Type.NUMBER },
+    current_ma:         { type: Type.NUMBER },
+    requires_driver:    { type: Type.BOOLEAN },
+    notes:              { type: Type.STRING },
+    simulation: {
+      type: Type.OBJECT,
+      properties: {
+        visual:               { type: Type.STRING },
+        defaultSimulatedValue: { type: Type.NUMBER },
+      },
+      required: ['visual'],
+    },
+  },
+  required: ['name', 'category', 'pin_types_required', 'voltage', 'current_ma', 'requires_driver', 'notes'],
+};
+
 const intentSchema: Schema = {
   type: Type.OBJECT,
   properties: {
@@ -384,6 +423,64 @@ Output ONLY valid JSON: { "milestones": [ { "id": string, "title": string, "desc
 
 // Mocks removed to comply with Rubric Section 4 (Hard Rules)
 
+// ─── Component spec generation (for /api/spec) ────────────────────────────────
+// AI generates component *metadata* only. The Blockly block shape and Arduino
+// code template are derived deterministically from this data — never from the LLM.
+
+const SPEC_SYSTEM = `You are a hardware component database assistant for Arduino/ESP32 projects.
+Given a component name (and optional description), return a JSON ComponentSpec object.
+This data is used ONLY to generate block metadata and Arduino pin templates — you are NOT generating any code.
+
+Rules:
+- name: exact component model/type (alphanumeric + underscores/hyphens, no spaces). Use conventional names (MQ_2, NeoPixel, RC522_RFID, etc.)
+- category: "Sensors" for sensing/measuring, "Actuators" for physical output, "Control" for logic/compute/drivers, "Power" for power management
+- pin_types_required: which pin types are needed — ["digital"], ["analog"], ["pwm"], ["i2c"], or combinations
+- voltage: 3.3 or 5.0 (typical Arduino/ESP32 compatible components)
+- current_ma: typical draw in mA (be conservative — look up datasheet values)
+- requires_driver: true if a separate driver IC or module is required
+- notes: 1–2 sentence wiring note (resistors, pull-ups, libraries to install)
+- simulation.visual: "led" for light output, "servo_arm" for motors/rotation, "buzzer_wave" for audio, "generic_readout" for sensors/displays
+
+Output ONLY valid JSON. No commentary.`;
+
+async function rawSpecCall(provider: string, componentName: string, description: string): Promise<string> {
+  const userPrompt = description
+    ? `Component: "${componentName}"\nDescription: "${description}"`
+    : `Component: "${componentName}"`;
+
+  if (provider === 'openai') {
+    const client = openaiClient();
+    const resp = await client.chat.completions.create({
+      model: 'gpt-4o',
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: SPEC_SYSTEM },
+        { role: 'user',   content: userPrompt },
+      ],
+    });
+    return resp.choices[0].message.content ?? '{}';
+  }
+
+  if (provider === 'anthropic') {
+    const client = anthropicClient();
+    const resp = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 512,
+      system: SPEC_SYSTEM,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+    const text = resp.content[0].type === 'text' ? resp.content[0].text : '{}';
+    const match = text.match(/\{[\s\S]*\}/);
+    return match ? match[0] : '{}';
+  }
+
+  // Default: Gemini
+  return await geminiWithFallback({
+    contents: `${SPEC_SYSTEM}\n\n${userPrompt}`,
+    config: { responseMimeType: 'application/json', responseSchema: componentSpecSchema },
+  });
+}
+
 // ─── High-level call functions (with schema validation + retry) ───────────────
 
 async function callClarify(
@@ -519,6 +616,46 @@ async function startServer() {
       res.json(result);
     } catch (e: any) {
       console.error('[compare] error:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── POST /api/spec ───────────────────────────────────────────────────────
+  // Generates a ComponentSpec for a component not in the static table.
+  // Returns pure metadata — the calling client derives the block and Arduino
+  // code template deterministically from it via registerRuntimeBlock.ts.
+  app.post('/api/spec', async (req, res) => {
+    try {
+      const { componentName, description = '' } = req.body as {
+        componentName: string;
+        description?: string;
+      };
+      if (!componentName?.trim()) {
+        res.status(400).json({ error: 'componentName is required' });
+        return;
+      }
+      const provider = resolveProvider(req);
+      console.log(`[spec] provider=${provider} component="${componentName}"`);
+
+      const result = await withSchemaValidation(
+        ZComponentSpec,
+        () => rawSpecCall(provider, componentName.trim(), description.trim()),
+        (err) => rawSpecCall(
+          provider,
+          componentName.trim(),
+          `${description.trim()}\n\n[CORRECTION] Previous response failed schema: ${err}. ` +
+          `Return valid JSON: { name, category, pin_types_required[], voltage, current_ma, requires_driver, notes, simulation? }`
+        ),
+        'spec',
+      );
+
+      if ('__schema_error' in (result as any)) {
+        res.status(422).json(result);
+        return;
+      }
+      res.json(result);
+    } catch (e: any) {
+      console.error('[spec] error:', e.message);
       res.status(500).json({ error: e.message });
     }
   });

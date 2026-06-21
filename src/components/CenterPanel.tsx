@@ -4,10 +4,15 @@ import { useCircuitStore } from '../store';
 import { resolvePinAssignments } from '../lib/pinMapper';
 import ReactFlow, { Background, Controls } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import * as Blockly from 'blockly';
+import 'blockly/blocks';
 import arduinoGenerator from '../lib/arduinoGenerator';
 import { findSpec, COMPONENTS, BOARD_PROFILES } from '../data/components';
+import type { ComponentSpec } from '../data/components';
+import { registerRuntimeBlock } from '../lib/registerRuntimeBlock';
+import CustomBlockPanel from './CustomBlockPanel';
+import { setActiveWorkspace, dropBlockFromEvent } from '../lib/workspaceRef';
 
 interface CenterPanelProps {
   view: CenterView;
@@ -310,7 +315,27 @@ const registerCustomBlocks = () => {
     return blockJson;
   });
 
-  Blockly.common.defineBlocksWithJsonArray(blockDefinitions);
+  Blockly.common.defineBlocksWithJsonArray([
+    ...blockDefinitions,
+    {
+      type: 'hardware_delay',
+      message0: 'delay %1 ms',
+      args0: [{ type: 'field_number', name: 'DELAY_MS', value: 1000, min: 0 }],
+      previousStatement: null,
+      nextStatement: null,
+      colour: '#d4af37',
+      tooltip: 'Pause execution for the given number of milliseconds',
+    },
+    {
+      type: 'hardware_serial_print',
+      message0: 'Serial.println( %1 )',
+      args0: [{ type: 'field_input', name: 'TEXT', text: 'Hello' }],
+      previousStatement: null,
+      nextStatement: null,
+      colour: '#9da3a6',
+      tooltip: 'Print a line to the Serial monitor',
+    },
+  ]);
 };
 
 
@@ -441,14 +466,24 @@ const initializeWorkspaceBlocks = (workspace: any, option: any) => {
 };
 
 function BlocksCanvas() {
-  const { options, selectedOptionId, validation, approved, setGeneratedCode, swapSimulation } = useCircuitStore();
+  const {
+    options, selectedOptionId, validation, approved,
+    setGeneratedCode, setWorkspaceState,
+    swapSimulation, customComponents,
+  } = useCircuitStore();
+
   const selectedOption = swapSimulation.active && swapSimulation.simulatedOption
     ? swapSimulation.simulatedOption
     : options.find(o => o.id === selectedOptionId);
 
   const confidence = validation?.confidence ?? 'verify_manually';
-  const blocklyRef = useRef<HTMLDivElement>(null);
+  const blocklyRef  = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<any>(null);
+
+  // State for the on-demand block generator panel
+  const [genPanel, setGenPanel] = useState<{ open: boolean; category: string }>({
+    open: false, category: 'Sensors',
+  });
 
   useEffect(() => {
     if (!selectedOption || !blocklyRef.current) return;
@@ -485,8 +520,11 @@ function BlocksCanvas() {
     });
 
     workspaceRef.current = workspace;
+    // Expose to the HardwarePanel / LogicPanel sidebars for block placement
+    setActiveWorkspace(workspace as Blockly.WorkspaceSvg);
 
-    workspace.registerToolboxCategoryCallback('SENSORS_DYNAMIC', (ws: any) => {
+    workspace.registerToolboxCategoryCallback('SENSORS_DYNAMIC', () => {
+      const { customComponents: runtimeComps } = useCircuitStore.getState();
       const list: any[] = [];
       const assignments = resolvePinAssignments(selectedOption);
       const processed = new Set<string>();
@@ -505,21 +543,25 @@ function BlocksCanvas() {
           const hcsr04 = assignments.filter(x => x.component === 'HC-SR04');
           defaultFields['TRIG_PIN'] = hcsr04[0]?.pin || 'None';
           defaultFields['ECHO_PIN'] = hcsr04[1]?.pin || hcsr04[0]?.pin || 'None';
-        } else {
-          if (a.pin !== 'UNASSIGNED') {
-            defaultFields['PIN'] = a.pin;
-          }
+        } else if (a.pin !== 'UNASSIGNED') {
+          defaultFields['PIN'] = a.pin;
         }
-        list.push({
-          kind: 'block',
-          type: `hardware_${spec.name}`,
-          fields: defaultFields
-        });
+        list.push({ kind: 'block', type: `hardware_${spec.name}`, fields: defaultFields });
       }
+
+      // Runtime-generated sensor blocks
+      for (const spec of runtimeComps.filter(c => c.category === 'Sensors')) {
+        if (!processed.has(spec.name)) {
+          list.push({ kind: 'block', type: `hardware_${spec.name}` });
+        }
+      }
+
+      list.push({ kind: 'button', text: '+ Generate Block…', callbackKey: 'GEN_BLOCK_Sensors' });
       return list;
     });
 
-    workspace.registerToolboxCategoryCallback('ACTUATORS_DYNAMIC', (ws: any) => {
+    workspace.registerToolboxCategoryCallback('ACTUATORS_DYNAMIC', () => {
+      const { customComponents: runtimeComps } = useCircuitStore.getState();
       const list: any[] = [];
       const assignments = resolvePinAssignments(selectedOption);
       const processed = new Set<string>();
@@ -544,74 +586,108 @@ function BlocksCanvas() {
           defaultFields['SCL_PIN'] = isUno ? 'A5' : 'GPIO22';
           defaultFields['LINE_1'] = spec.name === 'LCD_I2C' ? 'Temp & Humid' : 'System OK';
           defaultFields['LINE_2'] = spec.name === 'LCD_I2C' ? 'Monitoring...' : 'Active';
-        } else {
-          if (a.pin !== 'UNASSIGNED') {
-            defaultFields['PIN'] = a.pin;
-          }
+        } else if (a.pin !== 'UNASSIGNED') {
+          defaultFields['PIN'] = a.pin;
         }
-        list.push({
-          kind: 'block',
-          type: `hardware_${spec.name}`,
-          fields: defaultFields
-        });
+        list.push({ kind: 'block', type: `hardware_${spec.name}`, fields: defaultFields });
       }
+
+      for (const spec of runtimeComps.filter(c => c.category === 'Actuators')) {
+        if (!processed.has(spec.name)) {
+          list.push({ kind: 'block', type: `hardware_${spec.name}` });
+        }
+      }
+
+      list.push({ kind: 'button', text: '+ Generate Block…', callbackKey: 'GEN_BLOCK_Actuators' });
       return list;
     });
 
-    workspace.registerToolboxCategoryCallback('CONTROL_DYNAMIC', (ws: any) => {
+    workspace.registerToolboxCategoryCallback('CONTROL_DYNAMIC', () => {
+      const { customComponents: runtimeComps } = useCircuitStore.getState();
       const list: any[] = [];
       const boardComponent = selectedOption.components.find((c: string) => {
         const s = findSpec(c);
         return s && s.is_microcontroller;
       });
       const hostBoardName = boardComponent ? findSpec(boardComponent)?.name : 'ESP32';
-      list.push({
-        kind: 'block',
-        type: `hardware_${hostBoardName}`
-      });
+      list.push({ kind: 'block', type: `hardware_${hostBoardName}` });
 
       const otherControls = selectedOption.components.filter((c: string) => {
         const s = findSpec(c);
         return s && s.category === 'Control' && !s.is_microcontroller;
       });
-
       for (const c of otherControls) {
         const spec = findSpec(c);
-        if (spec) {
-          list.push({
-            kind: 'block',
-            type: `hardware_${spec.name}`
-          });
-        }
+        if (spec) list.push({ kind: 'block', type: `hardware_${spec.name}` });
       }
+
+      for (const spec of runtimeComps.filter(c => c.category === 'Control')) {
+        list.push({ kind: 'block', type: `hardware_${spec.name}` });
+      }
+
+      list.push({ kind: 'button', text: '+ Generate Block…', callbackKey: 'GEN_BLOCK_Control' });
       return list;
     });
 
-    workspace.registerToolboxCategoryCallback('POWER_DYNAMIC', (ws: any) => {
-      return [];
+    workspace.registerToolboxCategoryCallback('POWER_DYNAMIC', () => {
+      const { customComponents: runtimeComps } = useCircuitStore.getState();
+      const list: any[] = runtimeComps
+        .filter(c => c.category === 'Power')
+        .map(spec => ({ kind: 'block', type: `hardware_${spec.name}` }));
+      list.push({ kind: 'button', text: '+ Generate Block…', callbackKey: 'GEN_BLOCK_Power' });
+      return list;
+    });
+
+    // ── "Generate Block…" buttons at the bottom of each category flyout ──────
+    // Registers one button per category. Clicking opens the CustomBlockPanel.
+    (['Sensors', 'Actuators', 'Control', 'Power'] as const).forEach(cat => {
+      workspace.registerButtonCallback(`GEN_BLOCK_${cat}`, () => {
+        setGenPanel({ open: true, category: cat });
+      });
     });
 
     initializeWorkspaceBlocks(workspace, selectedOption);
 
+    // Initial code generation after scaffold — runs synchronously so
+    // RightPanel's Monaco editor is populated before the user sees it.
     try {
       const code = arduinoGenerator.workspaceToCode(workspace);
       setGeneratedCode(code);
+      const state = (Blockly.serialization as any).workspaces?.save(workspace);
+      if (state) setWorkspaceState(state);
     } catch (err) {
       console.error('Initial code gen error:', err);
     }
 
+    // ── Debounced change listener ──────────────────────────────────────────────
+    // A single debounced traversal drives both outputs:
+    //   1. Arduino C++ (for Monaco)
+    //   2. Workspace snapshot (for the Section 5 simulator, zero extra traversal)
+    // 300 ms prevents thrashing on continuous drag operations.
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
     const changeListener = (event: any) => {
       if (event.isUiEvent) return;
-      try {
-        const code = arduinoGenerator.workspaceToCode(workspace);
-        setGeneratedCode(code);
-      } catch (err) {
-        console.error('Blockly code gen error:', err);
-      }
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        try {
+          const code = arduinoGenerator.workspaceToCode(workspace);
+          setGeneratedCode(code);
+          // Workspace snapshot — simulator restores this in its iframe without
+          // a second traversal of the live workspace.
+          const state = (Blockly.serialization as any).workspaces?.save(workspace);
+          if (state) setWorkspaceState(state);
+        } catch (err) {
+          console.error('Blockly code gen error:', err);
+        }
+      }, 300);
     };
+
     workspace.addChangeListener(changeListener);
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      setActiveWorkspace(null);
       try {
         workspace.removeChangeListener(changeListener);
         workspace.dispose();
@@ -620,6 +696,26 @@ function BlocksCanvas() {
       if (blocklyRef.current) blocklyRef.current.innerHTML = '';
     };
   }, [selectedOptionId, swapSimulation.active, swapSimulation.simulatedOption?.components]);
+
+  // Called by CustomBlockPanel when a spec is ready (found in library OR AI-generated).
+  // Registers the block if needed, then places one instance on the canvas.
+  const handleBlockReady = useCallback((spec: ComponentSpec) => {
+    // Ensure block type + Arduino generator are registered (idempotent)
+    registerRuntimeBlock(spec);
+
+    // Place a block instance on the workspace
+    const ws = workspaceRef.current;
+    if (!ws) return;
+    try {
+      const block = ws.newBlock(`hardware_${spec.name}`);
+      block.initSvg();
+      block.render();
+      // Position below existing blocks
+      block.moveBy(60, 200);
+    } catch (err) {
+      console.warn(`[CustomBlock] Could not place block hardware_${spec.name}:`, err);
+    }
+  }, []);
 
   if (!selectedOption) {
     return (
@@ -665,9 +761,24 @@ function BlocksCanvas() {
         </div>
       )}
 
-      <div ref={blocklyRef} className="absolute inset-0 w-full h-full" style={{ paddingTop: '36px' }} />
+      <div
+        ref={blocklyRef}
+        className="absolute inset-0 w-full h-full"
+        style={{ paddingTop: '36px' }}
+        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
+        onDrop={(e) => { e.preventDefault(); dropBlockFromEvent(e); }}
+      />
 
       {!approved && validation && <PendingReviewOverlay />}
+
+      {/* On-demand block generator — appears when "Generate Block…" toolbox button is clicked */}
+      {genPanel.open && (
+        <CustomBlockPanel
+          category={genPanel.category}
+          onClose={() => setGenPanel(p => ({ ...p, open: false }))}
+          onBlockReady={handleBlockReady}
+        />
+      )}
     </div>
   );
 }

@@ -163,4 +163,115 @@ arduinoGenerator.forBlock['hardware_OLED_I2C'] = function(block: any, generator:
          `  delay(2000);\n`;
 };
 
+// ── Standard Blockly control/logic/math block generators ─────────────────────
+// These allow blocks from the Logic panel to produce Arduino C++ output.
+
+arduinoGenerator.forBlock['controls_if'] = function(block: any, generator: any) {
+  let n = 0;
+  let code = '';
+  do {
+    const cond = generator.valueToCode(block, `IF${n}`, generator.ORDER_NONE) || 'false';
+    const branch = generator.statementToCode(block, `DO${n}`);
+    code += (n === 0 ? 'if' : ' else if') + ` (${cond}) {\n${branch}}`;
+    n++;
+  } while (block.getInput(`IF${n}`));
+  if (block.getInput('ELSE')) {
+    code += ` else {\n${generator.statementToCode(block, 'ELSE')}}`;
+  }
+  return code + '\n';
+};
+
+arduinoGenerator.forBlock['controls_repeat_ext'] = function(block: any, generator: any) {
+  const count = generator.valueToCode(block, 'TIMES', generator.ORDER_NONE) || '10';
+  const body = generator.statementToCode(block, 'DO');
+  return `for (int count = 0; count < ${count}; count++) {\n${body}}\n`;
+};
+
+arduinoGenerator.forBlock['controls_whileUntil'] = function(block: any, generator: any) {
+  const until = block.getFieldValue('MODE') === 'UNTIL';
+  let cond = generator.valueToCode(block, 'BOOL', generator.ORDER_NONE) || 'false';
+  if (until) cond = `!(${cond})`;
+  const body = generator.statementToCode(block, 'DO');
+  return `while (${cond}) {\n${body}}\n`;
+};
+
+arduinoGenerator.forBlock['controls_for'] = function(block: any, generator: any) {
+  const varName = block.getField?.('VAR')?.getText?.() ?? 'i';
+  const from = generator.valueToCode(block, 'FROM', generator.ORDER_NONE) || '0';
+  const to   = generator.valueToCode(block, 'TO',   generator.ORDER_NONE) || '9';
+  const by   = generator.valueToCode(block, 'BY',   generator.ORDER_NONE) || '1';
+  const body = generator.statementToCode(block, 'DO');
+  return `for (int ${varName} = ${from}; ${varName} <= ${to}; ${varName} += ${by}) {\n${body}}\n`;
+};
+
+arduinoGenerator.forBlock['logic_compare'] = function(block: any, generator: any) {
+  const ops: Record<string, string> = { EQ: '==', NEQ: '!=', LT: '<', LTE: '<=', GT: '>', GTE: '>=' };
+  const op = ops[block.getFieldValue('OP')] ?? '==';
+  const left  = generator.valueToCode(block, 'A', generator.ORDER_NONE) || '0';
+  const right = generator.valueToCode(block, 'B', generator.ORDER_NONE) || '0';
+  return [`(${left} ${op} ${right})`, generator.ORDER_NONE];
+};
+
+arduinoGenerator.forBlock['logic_operation'] = function(block: any, generator: any) {
+  const op = block.getFieldValue('OP') === 'AND' ? '&&' : '||';
+  const left  = generator.valueToCode(block, 'A', generator.ORDER_NONE) || 'false';
+  const right = generator.valueToCode(block, 'B', generator.ORDER_NONE) || 'false';
+  return [`(${left} ${op} ${right})`, generator.ORDER_NONE];
+};
+
+arduinoGenerator.forBlock['logic_negate'] = function(block: any, generator: any) {
+  const val = generator.valueToCode(block, 'BOOL', generator.ORDER_NONE) || 'false';
+  return [`!(${val})`, generator.ORDER_NONE];
+};
+
+arduinoGenerator.forBlock['logic_boolean'] = function(block: any, _generator: any) {
+  return [block.getFieldValue('BOOL') === 'TRUE' ? 'true' : 'false', 0 /* ORDER_ATOMIC */];
+};
+
+arduinoGenerator.forBlock['math_number'] = function(block: any, _generator: any) {
+  return [String(Number(block.getFieldValue('NUM')) || 0), 0 /* ORDER_ATOMIC */];
+};
+
+arduinoGenerator.forBlock['math_arithmetic'] = function(block: any, generator: any) {
+  const ops: Record<string, string> = { ADD: '+', MINUS: '-', MULTIPLY: '*', DIVIDE: '/', POWER: '^' };
+  const op   = ops[block.getFieldValue('OP')] ?? '+';
+  const left  = generator.valueToCode(block, 'A', generator.ORDER_NONE) || '0';
+  const right = generator.valueToCode(block, 'B', generator.ORDER_NONE) || '0';
+  if (op === '^') return [`pow(${left}, ${right})`, generator.ORDER_NONE];
+  return [`(${left} ${op} ${right})`, generator.ORDER_NONE];
+};
+
+arduinoGenerator.forBlock['math_modulo'] = function(block: any, generator: any) {
+  const left  = generator.valueToCode(block, 'DIVIDEND', generator.ORDER_NONE) || '0';
+  const right = generator.valueToCode(block, 'DIVISOR',  generator.ORDER_NONE) || '1';
+  return [`(${left} % ${right})`, generator.ORDER_NONE];
+};
+
+arduinoGenerator.forBlock['variables_get'] = function(block: any, _generator: any) {
+  const name = block.getField?.('VAR')?.getText?.() ?? 'myVar';
+  return [name, 0 /* ORDER_ATOMIC */];
+};
+
+arduinoGenerator.forBlock['variables_set'] = function(block: any, generator: any) {
+  const name = block.getField?.('VAR')?.getText?.() ?? 'myVar';
+  const val  = generator.valueToCode(block, 'VALUE', generator.ORDER_NONE) || '0';
+  return `${name} = ${val};\n`;
+};
+
+arduinoGenerator.forBlock['text'] = function(block: any, _generator: any) {
+  return [`"${block.getFieldValue('TEXT')}"`, 0 /* ORDER_ATOMIC */];
+};
+
+// hardware_delay: simple delay(ms) statement
+arduinoGenerator.forBlock['hardware_delay'] = function(block: any, _generator: any) {
+  const ms = block.getFieldValue('DELAY_MS') ?? '1000';
+  return `  delay(${ms});\n`;
+};
+
+// hardware_serial_print: Serial.println(text)
+arduinoGenerator.forBlock['hardware_serial_print'] = function(block: any, _generator: any) {
+  const text = block.getFieldValue('TEXT') ?? '';
+  return `  Serial.println("${text}");\n`;
+};
+
 export default arduinoGenerator;
