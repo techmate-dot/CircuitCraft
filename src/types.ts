@@ -121,5 +121,14 @@ export type PinAssignment = {
   role: 'input' | 'output' | 'bidirectional' | 'power';
 };
 
+/** AI-generated resolution for a conflict — either swap or add adapter */
+export type ConflictResolution = {
+  id: string;
+  title: string;
+  description: string;
+  resolvedComponents: string[];  // Updated component list after resolution
+  explanation: string;            // Why this fixes the conflicts
+};
+
 // Note: ComponentSpec, BoardProfile, ValidationResult, and RuleViolation live in
 // src/data/components.ts — the Domain layer owns them.

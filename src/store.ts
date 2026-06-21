@@ -7,6 +7,7 @@ import type {
   PipelineState,
   PipelineError,
   AIProvider,
+  ConflictResolution,
 } from './types';
 import type { ValidationResult, ComponentSpec } from './data/components';
 import { validateArchitecture } from './data/components';
@@ -119,6 +120,12 @@ interface CircuitStore {
   applySwapSimulation: () => void;
   clearSwapSimulation: () => void;
 
+  // ── Module J: AI-Driven Conflict Resolution ────────────────────────────────
+  conflictResolutions: ConflictResolution[];
+  fetchConflictResolutions: () => Promise<void>;
+  applyResolution: (resolution: ConflictResolution) => void;
+  clearConflictResolutions: () => void;
+
   // ── Full reset (start a new project) ─────────────────────────────────────
   reset: () => void;
 }
@@ -133,16 +140,16 @@ const APPROVED_STATES: PipelineState[] = ['APPROVED'];
 
 function derivedClarifyStage(ps: PipelineState): ClarifyStage {
   switch (ps) {
-    case 'IDLE':                return 'idle';
-    case 'AWAITING_CLARIFY':    return 'waiting_clarification';
-    case 'CLARIFYING':          return 'clarifying';
-    case 'OPTIONS_PRESENTED':   return 'options_ready';
+    case 'IDLE': return 'idle';
+    case 'AWAITING_CLARIFY': return 'waiting_clarification';
+    case 'CLARIFYING': return 'clarifying';
+    case 'OPTIONS_PRESENTED': return 'options_ready';
     case 'VALIDATION_BLOCKED':
     case 'VALIDATED':
     case 'PLAN_GENERATING':
     case 'AWAITING_APPROVAL':
-    case 'APPROVED':            return 'option_selected';
-    default:                    return 'idle';
+    case 'APPROVED': return 'option_selected';
+    default: return 'idle';
   }
 }
 
@@ -183,6 +190,7 @@ const INITIAL_STATE = {
     simulatedValidation: null,
     simulatedPlan: null,
   } as SwapSimulation,
+  conflictResolutions: [] as ConflictResolution[],
 };
 
 export const useCircuitStore = create<CircuitStore>((_set, get) => {
@@ -204,190 +212,256 @@ export const useCircuitStore = create<CircuitStore>((_set, get) => {
   return {
     ...INITIAL_STATE,
 
-  // ── AI Provider ──────────────────────────────────────────────────────────────
-  setAiProvider: (p) => {
-    if (typeof window !== 'undefined') localStorage.setItem('cc_provider', p);
-    set({ aiProvider: p });
-  },
+    // ── AI Provider ──────────────────────────────────────────────────────────────
+    setAiProvider: (p) => {
+      if (typeof window !== 'undefined') localStorage.setItem('cc_provider', p);
+      set({ aiProvider: p });
+    },
 
-  // ── Pipeline state machine ────────────────────────────────────────────────────
-  transitionTo: (state, error) =>
-    set({ pipelineState: state, pipelineError: error ?? null }),
+    // ── Pipeline state machine ────────────────────────────────────────────────────
+    transitionTo: (state, error) =>
+      set({ pipelineState: state, pipelineError: error ?? null }),
 
-  // Compat setters — they update pipelineState where possible
-  setIsLoading: (_v) => {
-    // no-op: use transitionTo instead; kept for backward compat
-  },
-  setApproved: (approved) => {
-    if (approved) {
-      set({ pipelineState: 'APPROVED' });
-    }
-  },
-  setClarifyStage: (s: ClarifyStage) => {
-    // Map old ClarifyStage back to PipelineState
-    const map: Record<ClarifyStage, PipelineState> = {
-      'idle':                 'IDLE',
-      'clarifying':           'CLARIFYING',
-      'waiting_clarification':'AWAITING_CLARIFY',
-      'options_ready':        'OPTIONS_PRESENTED',
-      'option_selected':      'VALIDATED',
-    };
-    set({ pipelineState: map[s] ?? 'IDLE' });
-  },
+    // Compat setters — they update pipelineState where possible
+    setIsLoading: (_v) => {
+      // no-op: use transitionTo instead; kept for backward compat
+    },
+    setApproved: (approved) => {
+      if (approved) {
+        set({ pipelineState: 'APPROVED' });
+      }
+    },
+    setClarifyStage: (s: ClarifyStage) => {
+      // Map old ClarifyStage back to PipelineState
+      const map: Record<ClarifyStage, PipelineState> = {
+        'idle': 'IDLE',
+        'clarifying': 'CLARIFYING',
+        'waiting_clarification': 'AWAITING_CLARIFY',
+        'options_ready': 'OPTIONS_PRESENTED',
+        'option_selected': 'VALIDATED',
+      };
+      set({ pipelineState: map[s] ?? 'IDLE' });
+    },
 
-  // ── Chat ──────────────────────────────────────────────────────────────────────
-  addMessage: (msg) => set((state) => ({ messages: [...state.messages, msg] })),
-  clearMessages: () => set({ messages: INITIAL_STATE.messages }),
+    // ── Chat ──────────────────────────────────────────────────────────────────────
+    addMessage: (msg) => set((state) => ({ messages: [...state.messages, msg] })),
+    clearMessages: () => set({ messages: INITIAL_STATE.messages }),
 
-  // ── Clarify context ───────────────────────────────────────────────────────────
-  appendClarifyContext: (entry) =>
-    set((state) => ({ clarifyContext: [...state.clarifyContext, entry] })),
-  resetClarifyContext: () => set({ clarifyContext: [] }),
+    // ── Clarify context ───────────────────────────────────────────────────────────
+    appendClarifyContext: (entry) =>
+      set((state) => ({ clarifyContext: [...state.clarifyContext, entry] })),
+    resetClarifyContext: () => set({ clarifyContext: [] }),
 
-  // ── Module B ─────────────────────────────────────────────────────────────────
-  setIntent: (intent) => set({ intent }),
+    // ── Module B ─────────────────────────────────────────────────────────────────
+    setIntent: (intent) => set({ intent }),
 
-  // ── Module C ─────────────────────────────────────────────────────────────────
-  setOptions: (options) => set({ options }),
-  setSelectedOptionId: (id) => set({ selectedOptionId: id, generatedCode: null }),
+    // ── Module C ─────────────────────────────────────────────────────────────────
+    setOptions: (options) => set({ options }),
+    setSelectedOptionId: (id) => set({ selectedOptionId: id, generatedCode: null }),
 
-  // ── Module E ─────────────────────────────────────────────────────────────────
-  setValidation: (validation) => {
-    if (validation) {
-      const hasConflicts = validation.violations.some(v => v.severity === 'conflict');
+    // ── Module E ─────────────────────────────────────────────────────────────────
+    setValidation: (validation) => {
+      if (validation) {
+        const hasConflicts = validation.violations.some(v => v.severity === 'conflict');
+        set({
+          validation,
+          pipelineState: hasConflicts ? 'VALIDATION_BLOCKED' : 'VALIDATED',
+        });
+      } else {
+        set({ validation });
+      }
+    },
+
+    // ── Module F ──────────────────────────────────────────────────────────────────────────────────
+    setPlan: (plan) =>
+      // Plan arriving → AWAITING_APPROVAL, NOT APPROVED.
+      // Overlays stay locked until the user clicks “Mark as Reviewed” (APPROVE_FINAL action).
+      set({ plan, pipelineState: plan ? 'AWAITING_APPROVAL' : get().pipelineState }),
+    setCurrentMilestoneId: (id) => set({ currentMilestoneId: id }),
+
+    // ── Module G ─────────────────────────────────────────────────────────────────
+    setGeneratedCode: (generatedCode) => set({ generatedCode }),
+
+    // ── Runtime block registry ────────────────────────────────────────────────────
+    addCustomComponent: (spec) =>
+      set((state) => ({ customComponents: [...state.customComponents, spec] })),
+
+    // ── Workspace snapshot ────────────────────────────────────────────────────────
+    setWorkspaceState: (workspaceState) => set({ workspaceState }),
+
+    // ── What-If Swap Sandbox ──────────────────────────────────────────────────────
+    startSwapSimulation: async (original, replacement) => {
+      const { selectedOptionId, options, aiProvider } = get();
+      const option = options.find((o) => o.id === selectedOptionId);
+      if (!option) return;
+
+      set({ pipelineState: 'VALIDATING' });
+
+      const pinMatch = original.match(/\(([^)]+)\)/);
+      const suffix = pinMatch ? ` (${pinMatch[1]})` : '';
+      const replacementStr = `${replacement}${suffix}`;
+
+      const newComponents = option.components.map((c) =>
+        c === original ? replacementStr : c
+      );
+
+      const simulatedOption: ArchitectureOption = {
+        ...option,
+        components: newComponents,
+        label: `${option.label} (Swapped: ${replacement})`,
+      };
+
+      const simulatedValidation = validateArchitecture(simulatedOption);
+
+      try {
+        const resPlan = await fetch('/api/plan', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-AI-Provider': aiProvider,
+          },
+          body: JSON.stringify({ option: simulatedOption }),
+        });
+        const milestones = await resPlan.json();
+        const simulatedPlan = { milestones };
+
+        set({
+          pipelineState: 'VALIDATED',
+          swapSimulation: {
+            active: true,
+            originalComponent: original,
+            replacementComponent: replacement,
+            simulatedOption,
+            simulatedValidation,
+            simulatedPlan,
+          },
+        });
+      } catch (e: any) {
+        console.error('Error simulating plan:', e);
+        set({
+          pipelineState: 'VALIDATED',
+          swapSimulation: {
+            active: true,
+            originalComponent: original,
+            replacementComponent: replacement,
+            simulatedOption,
+            simulatedValidation,
+            simulatedPlan: null,
+          },
+        });
+      }
+    },
+
+    applySwapSimulation: () => {
+      const { swapSimulation, options, selectedOptionId } = get();
+      if (!swapSimulation.active || !swapSimulation.simulatedOption) return;
+
+      const newOptions = options.map((o) =>
+        o.id === selectedOptionId ? swapSimulation.simulatedOption! : o
+      );
+
       set({
-        validation,
-        pipelineState: hasConflicts ? 'VALIDATION_BLOCKED' : 'VALIDATED',
-      });
-    } else {
-      set({ validation });
-    }
-  },
-
-  // ── Module F ──────────────────────────────────────────────────────────────────────────────────
-  setPlan: (plan) =>
-    // Plan arriving → AWAITING_APPROVAL, NOT APPROVED.
-    // Overlays stay locked until the user clicks “Mark as Reviewed” (APPROVE_FINAL action).
-    set({ plan, pipelineState: plan ? 'AWAITING_APPROVAL' : get().pipelineState }),
-  setCurrentMilestoneId: (id) => set({ currentMilestoneId: id }),
-
-  // ── Module G ─────────────────────────────────────────────────────────────────
-  setGeneratedCode: (generatedCode) => set({ generatedCode }),
-
-  // ── Runtime block registry ────────────────────────────────────────────────────
-  addCustomComponent: (spec) =>
-    set((state) => ({ customComponents: [...state.customComponents, spec] })),
-
-  // ── Workspace snapshot ────────────────────────────────────────────────────────
-  setWorkspaceState: (workspaceState) => set({ workspaceState }),
-
-  // ── What-If Swap Sandbox ──────────────────────────────────────────────────────
-  startSwapSimulation: async (original, replacement) => {
-    const { selectedOptionId, options, aiProvider } = get();
-    const option = options.find((o) => o.id === selectedOptionId);
-    if (!option) return;
-
-    set({ pipelineState: 'VALIDATING' });
-
-    const pinMatch = original.match(/\(([^)]+)\)/);
-    const suffix = pinMatch ? ` (${pinMatch[1]})` : '';
-    const replacementStr = `${replacement}${suffix}`;
-
-    const newComponents = option.components.map((c) =>
-      c === original ? replacementStr : c
-    );
-
-    const simulatedOption: ArchitectureOption = {
-      ...option,
-      components: newComponents,
-      label: `${option.label} (Swapped: ${replacement})`,
-    };
-
-    const simulatedValidation = validateArchitecture(simulatedOption);
-
-    try {
-      const resPlan = await fetch('/api/plan', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-AI-Provider': aiProvider,
-        },
-        body: JSON.stringify({ option: simulatedOption }),
-      });
-      const milestones = await resPlan.json();
-      const simulatedPlan = { milestones };
-
-      set({
-        pipelineState: 'VALIDATED',
+        options: newOptions,
+        validation: swapSimulation.simulatedValidation,
+        plan: swapSimulation.simulatedPlan,
+        currentMilestoneId: swapSimulation.simulatedPlan?.milestones[0]?.id ?? null,
         swapSimulation: {
-          active: true,
-          originalComponent: original,
-          replacementComponent: replacement,
-          simulatedOption,
-          simulatedValidation,
-          simulatedPlan,
-        },
-      });
-    } catch (e: any) {
-      console.error('Error simulating plan:', e);
-      set({
-        pipelineState: 'VALIDATED',
-        swapSimulation: {
-          active: true,
-          originalComponent: original,
-          replacementComponent: replacement,
-          simulatedOption,
-          simulatedValidation,
+          active: false,
+          originalComponent: null,
+          replacementComponent: null,
+          simulatedOption: null,
+          simulatedValidation: null,
           simulatedPlan: null,
         },
       });
-    }
-  },
 
-  applySwapSimulation: () => {
-    const { swapSimulation, options, selectedOptionId } = get();
-    if (!swapSimulation.active || !swapSimulation.simulatedOption) return;
+      const msgContent = `**What-If Swap Applied** 🔄\n\nReplaced component \`${swapSimulation.originalComponent}\` with \`${swapSimulation.replacementComponent}\`.\n\nProject code, pin mappings, and milestone plan have been updated.`;
+      get().addMessage({
+        role: 'assistant',
+        content: msgContent,
+        type: 'text',
+      });
+    },
 
-    const newOptions = options.map((o) =>
-      o.id === selectedOptionId ? swapSimulation.simulatedOption! : o
-    );
+    clearSwapSimulation: () => {
+      set({
+        swapSimulation: {
+          active: false,
+          originalComponent: null,
+          replacementComponent: null,
+          simulatedOption: null,
+          simulatedValidation: null,
+          simulatedPlan: null,
+        },
+      });
+    },
 
-    set({
-      options: newOptions,
-      validation: swapSimulation.simulatedValidation,
-      plan: swapSimulation.simulatedPlan,
-      currentMilestoneId: swapSimulation.simulatedPlan?.milestones[0]?.id ?? null,
-      swapSimulation: {
-        active: false,
-        originalComponent: null,
-        replacementComponent: null,
-        simulatedOption: null,
-        simulatedValidation: null,
-        simulatedPlan: null,
-      },
-    });
+    fetchConflictResolutions: async () => {
+      const { validation, selectedOptionId, options, aiProvider } = get();
+      if (!validation || !selectedOptionId) return;
 
-    const msgContent = `**What-If Swap Applied** 🔄\n\nReplaced component \`${swapSimulation.originalComponent}\` with \`${swapSimulation.replacementComponent}\`.\n\nProject code, pin mappings, and milestone plan have been updated.`;
-    get().addMessage({
-      role: 'assistant',
-      content: msgContent,
-      type: 'text',
-    });
-  },
+      const option = options.find((o) => o.id === selectedOptionId);
+      if (!option) return;
 
-  clearSwapSimulation: () => {
-    set({
-      swapSimulation: {
-        active: false,
-        originalComponent: null,
-        replacementComponent: null,
-        simulatedOption: null,
-        simulatedValidation: null,
-        simulatedPlan: null,
-      },
-    });
-  },
+      const conflicts = validation.violations.filter(v => v.severity === 'conflict');
+      if (conflicts.length === 0) return;
 
-  reset: () => set({ ...INITIAL_STATE }),
+      set({ pipelineState: 'VALIDATING' });
+
+      try {
+        const res = await fetch('/api/resolve-conflicts', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-AI-Provider': aiProvider,
+          },
+          body: JSON.stringify({ option, violations: conflicts }),
+        });
+        const resolutions = await res.json();
+        set({ conflictResolutions: Array.isArray(resolutions) ? resolutions : [] });
+      } catch (e: any) {
+        console.error('[fetch-resolutions] error:', e);
+        set({ conflictResolutions: [] });
+      }
+    },
+
+    applyResolution: (resolution: ConflictResolution) => {
+      const { options, selectedOptionId, aiProvider } = get();
+      const option = options.find((o) => o.id === selectedOptionId);
+      if (!option) return;
+
+      const updatedOption: ArchitectureOption = {
+        ...option,
+        components: resolution.resolvedComponents,
+        label: `${option.label} (${resolution.title})`,
+      };
+
+      const newOptions = options.map((o) =>
+        o.id === selectedOptionId ? updatedOption : o
+      );
+
+      const validation = validateArchitecture(updatedOption);
+
+      set({
+        options: newOptions,
+        validation,
+        conflictResolutions: [],
+        pipelineState: validation.violations.filter(v => v.severity === 'conflict').length > 0
+          ? 'VALIDATION_BLOCKED'
+          : 'VALIDATED',
+      });
+
+      get().addMessage({
+        role: 'assistant',
+        content: `✓ **Applied Resolution: ${resolution.title}**\n\n${resolution.explanation}`,
+        type: 'text',
+      });
+    },
+
+    clearConflictResolutions: () => {
+      set({ conflictResolutions: [] });
+    },
+
+    reset: () => set({ ...INITIAL_STATE }),
   };
 });

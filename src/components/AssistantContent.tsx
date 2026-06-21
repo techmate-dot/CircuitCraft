@@ -77,11 +77,10 @@ function ClarifyCard({
                           key={j}
                           type="button"
                           onClick={() => onToggleChip(ans)}
-                          className={`font-mono text-[10px] px-2 py-1 rounded border transition-colors cursor-pointer ${
-                            isSelected
-                              ? 'border-tertiary bg-tertiary/30 text-tertiary ring-1 ring-tertiary/50'
-                              : 'border-tertiary/40 bg-tertiary/8 text-tertiary/80 hover:bg-tertiary/20 hover:text-tertiary'
-                          }`}
+                          className={`font-mono text-[10px] px-2 py-1 rounded border transition-colors cursor-pointer ${isSelected
+                            ? 'border-tertiary bg-tertiary/30 text-tertiary ring-1 ring-tertiary/50'
+                            : 'border-tertiary/40 bg-tertiary/8 text-tertiary/80 hover:bg-tertiary/20 hover:text-tertiary'
+                            }`}
                         >
                           {isSelected ? '✓ ' : ''}{ans}
                         </button>
@@ -231,8 +230,12 @@ function OptionCard({
 
 // ─── Validation widget — consumes RuleViolation[] with rule IDs ───────────────
 function ValidationWidget() {
-  const { validation, pipelineState, transitionTo, isLoading } = useCircuitStore();
+  const { validation, pipelineState, transitionTo, isLoading, options, selectedOptionId, startSwapSimulation, swapSimulation, conflictResolutions, fetchConflictResolutions, applyResolution } = useCircuitStore();
   const [acknowledged, setAcknowledged] = useState(false);
+  const [swapOriginal, setSwapOriginal] = useState('');
+  const [swapReplacement, setSwapReplacement] = useState('');
+  const [isSwapping, setIsSwapping] = useState(false);
+  const [isFetchingResolutions, setIsFetchingResolutions] = useState(false);
 
   if (!validation) return null;
 
@@ -242,6 +245,32 @@ function ValidationWidget() {
 
   const hasIssues = conflicts.length > 0 || warnings.length > 0;
   const canApprove = conflicts.length === 0 && (!hasIssues || acknowledged);
+
+  const handleSwapClick = async () => {
+    if (!swapOriginal.trim() || !swapReplacement.trim()) return;
+    setIsSwapping(true);
+    try {
+      await startSwapSimulation(swapOriginal.trim(), swapReplacement.trim());
+    } catch (e) {
+      console.error('[swap] error:', e);
+    } finally {
+      setIsSwapping(false);
+    }
+  };
+
+  const handleFetchResolutions = async () => {
+    setIsFetchingResolutions(true);
+    try {
+      await fetchConflictResolutions();
+    } catch (e) {
+      console.error('[fetch-resolutions] error:', e);
+    } finally {
+      setIsFetchingResolutions(false);
+    }
+  };
+
+  const simulatedConflicts = swapSimulation.simulatedValidation?.violations.filter(v => v.severity === 'conflict') ?? [];
+  const swapHelpful = swapSimulation.active && simulatedConflicts.length < conflicts.length;
 
   return (
     <div className="mt-3 flex flex-col gap-2 border-t border-outline-variant/40 pt-3">
@@ -268,6 +297,85 @@ function ValidationWidget() {
 
       {/* Warnings — require acknowledgement */}
       {warnings.map((v, i) => <ViolationRow key={i} v={v} />)}
+
+      {/* AI-suggested resolutions */}
+      {conflicts.length > 0 && conflictResolutions.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-outline-variant/30 flex flex-col gap-1.5">
+          <div className="flex items-center gap-1.5 text-secondary text-xs mb-1">
+            <Lightbulb size={12} />
+            <span className="font-mono font-bold uppercase tracking-wide">AI Suggestions</span>
+          </div>
+          {conflictResolutions.map((resolution) => (
+            <button
+              key={resolution.id}
+              onClick={() => applyResolution(resolution)}
+              className="p-2 text-xs rounded border border-secondary/30 bg-secondary/10 hover:bg-secondary/20 text-left transition-colors"
+            >
+              <div className="font-bold text-secondary mb-0.5">{resolution.title}</div>
+              <div className="text-on-surface-variant text-[9px]">{resolution.description}</div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Ask AI for suggestions button */}
+      {conflicts.length > 0 && conflictResolutions.length === 0 && !swapSimulation.active && (
+        <button
+          onClick={handleFetchResolutions}
+          disabled={isFetchingResolutions}
+          className="mt-2 text-xs px-2 py-1.5 rounded border border-secondary/40 bg-secondary/10 text-secondary hover:bg-secondary/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {isFetchingResolutions ? 'Getting suggestions…' : '💡 Ask AI to resolve conflicts'}
+        </button>
+      )}
+
+      {/* Try swapping a component when conflicts exist */}
+      {conflicts.length > 0 && !swapSimulation.active && (
+        <div className="mt-2 pt-2 border-t border-outline-variant/30 flex flex-col gap-1.5">
+          <span className="text-xs text-on-surface-variant font-mono uppercase tracking-wide">Or try swapping a component:</span>
+          <input
+            type="text"
+            placeholder="Original component (e.g. HC-SR04)"
+            value={swapOriginal}
+            onChange={(e) => setSwapOriginal(e.target.value)}
+            className="text-xs px-2 py-1 rounded border border-outline-variant bg-surface-container-low text-on-surface placeholder-on-surface-variant/50"
+          />
+          <input
+            type="text"
+            placeholder="Replace with (e.g. JSN-SR04T)"
+            value={swapReplacement}
+            onChange={(e) => setSwapReplacement(e.target.value)}
+            className="text-xs px-2 py-1 rounded border border-outline-variant bg-surface-container-low text-on-surface placeholder-on-surface-variant/50"
+          />
+          <button
+            onClick={handleSwapClick}
+            disabled={!swapOriginal.trim() || !swapReplacement.trim() || isSwapping}
+            className="text-xs px-2 py-1.5 rounded border border-tertiary/40 bg-tertiary/10 text-tertiary hover:bg-tertiary/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {isSwapping ? 'Simulating…' : 'Simulate Swap'}
+          </button>
+        </div>
+      )}
+
+      {/* Simulated swap result */}
+      {swapSimulation.active && swapSimulation.simulatedValidation && (
+        <div className="mt-2 pt-2 border-t border-outline-variant/30 flex flex-col gap-1.5">
+          <div className="flex items-center gap-1.5 text-tertiary text-xs">
+            <span className="font-mono font-bold">Swap Simulation Result:</span>
+          </div>
+          {swapHelpful ? (
+            <div className="flex gap-1.5 items-center text-secondary text-xs">
+              <CheckCircle2 size={12} />
+              <span>✓ Reduced conflicts to {simulatedConflicts.length}</span>
+            </div>
+          ) : (
+            <div className="flex gap-1.5 items-center text-error text-xs">
+              <AlertCircle size={12} />
+              <span>Still has {simulatedConflicts.length} conflict(s)</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Only show controls if not yet approved */}
       {!approved && (
@@ -385,14 +493,14 @@ type Risk = { title: string; severity: 'low' | 'medium' | 'high'; description: s
 
 function RiskCard({ risks }: { risks: Risk[] }) {
   const severityStyle: Record<string, string> = {
-    high:   'text-error bg-error/10 border-error/25',
+    high: 'text-error bg-error/10 border-error/25',
     medium: 'text-tertiary bg-tertiary/10 border-tertiary/25',
-    low:    'text-on-surface-variant bg-surface-container border-outline-variant/40',
+    low: 'text-on-surface-variant bg-surface-container border-outline-variant/40',
   };
   const SeverityIcon = ({ s }: { s: string }) =>
-    s === 'high'   ? <AlertCircle size={12} className="shrink-0 mt-0.5" /> :
-    s === 'medium' ? <TriangleAlert size={12} className="shrink-0 mt-0.5" /> :
-                     <ShieldAlert size={12} className="shrink-0 mt-0.5" />;
+    s === 'high' ? <AlertCircle size={12} className="shrink-0 mt-0.5" /> :
+      s === 'medium' ? <TriangleAlert size={12} className="shrink-0 mt-0.5" /> :
+        <ShieldAlert size={12} className="shrink-0 mt-0.5" />;
 
   if (!risks || risks.length === 0) return null;
 

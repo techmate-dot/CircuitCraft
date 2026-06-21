@@ -161,6 +161,18 @@ const ZMilestonePlan = z.object({
   milestones: z.array(ZMilestone).min(4).max(5),
 });
 
+const ZConflictResolution = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().min(1),
+  resolvedComponents: z.array(z.string()).min(1),
+  explanation: z.string().min(1),
+});
+
+const ZResolveConflictsResponse = z.object({
+  resolutions: z.array(ZConflictResolution).min(1).max(3),
+});
+
 // ComponentSpec schema for on-demand block generation (/api/spec)
 // AI produces component *metadata* only — the block shape and code template are
 // derived deterministically from this data by registerRuntimeBlock.ts.
@@ -182,17 +194,17 @@ const ZComponentSpec = z.object({
 const componentSpecSchema: Schema = {
   type: Type.OBJECT,
   properties: {
-    name:               { type: Type.STRING },
-    category:           { type: Type.STRING },
+    name: { type: Type.STRING },
+    category: { type: Type.STRING },
     pin_types_required: { type: Type.ARRAY, items: { type: Type.STRING } },
-    voltage:            { type: Type.NUMBER },
-    current_ma:         { type: Type.NUMBER },
-    requires_driver:    { type: Type.BOOLEAN },
-    notes:              { type: Type.STRING },
+    voltage: { type: Type.NUMBER },
+    current_ma: { type: Type.NUMBER },
+    requires_driver: { type: Type.BOOLEAN },
+    notes: { type: Type.STRING },
     simulation: {
       type: Type.OBJECT,
       properties: {
-        visual:               { type: Type.STRING },
+        visual: { type: Type.STRING },
         defaultSimulatedValue: { type: Type.NUMBER },
       },
       required: ['visual'],
@@ -204,20 +216,20 @@ const componentSpecSchema: Schema = {
 const intentSchema: Schema = {
   type: Type.OBJECT,
   properties: {
-    goal:                  { type: Type.STRING },
-    components_mentioned:  { type: Type.ARRAY, items: { type: Type.STRING } },
+    goal: { type: Type.STRING },
+    components_mentioned: { type: Type.ARRAY, items: { type: Type.STRING } },
     missing_info: {
       type: Type.ARRAY,
       items: {
         type: Type.OBJECT,
         properties: {
-          question:         { type: Type.STRING },
+          question: { type: Type.STRING },
           suggestedAnswers: { type: Type.ARRAY, items: { type: Type.STRING } },
         },
         required: ['question', 'suggestedAnswers'],
       },
     },
-    assumptions:           { type: Type.ARRAY, items: { type: Type.STRING } },
+    assumptions: { type: Type.ARRAY, items: { type: Type.STRING } },
   },
   required: ['goal', 'components_mentioned', 'missing_info', 'assumptions'],
 };
@@ -231,16 +243,16 @@ const architectureOptionSchema: Schema = {
       items: {
         type: Type.OBJECT,
         properties: {
-          id:         { type: Type.STRING },
-          label:      { type: Type.STRING },
+          id: { type: Type.STRING },
+          label: { type: Type.STRING },
           components: { type: Type.ARRAY, items: { type: Type.STRING } },
           tradeoffs: {
             type: Type.OBJECT,
             properties: {
-              cost:        { type: Type.STRING },
+              cost: { type: Type.STRING },
               portability: { type: Type.STRING },
-              complexity:  { type: Type.STRING },
-              power:       { type: Type.STRING },
+              complexity: { type: Type.STRING },
+              power: { type: Type.STRING },
             },
             required: ['cost', 'portability', 'complexity', 'power'],
           },
@@ -261,16 +273,38 @@ const milestonePlanSchema: Schema = {
       items: {
         type: Type.OBJECT,
         properties: {
-          id:          { type: Type.STRING },
-          title:       { type: Type.STRING },
+          id: { type: Type.STRING },
+          title: { type: Type.STRING },
           description: { type: Type.STRING },
-          depends_on:  { type: Type.STRING, nullable: true },
+          depends_on: { type: Type.STRING, nullable: true },
         },
         required: ['id', 'title', 'description'],
       },
     },
   },
   required: ['milestones'],
+};
+
+const resolveConflictsSchema: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    resolutions: {
+      type: Type.ARRAY,
+      description: '1-3 resolution options for DRC conflicts',
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          id: { type: Type.STRING },
+          title: { type: Type.STRING },
+          description: { type: Type.STRING },
+          resolvedComponents: { type: Type.ARRAY, items: { type: Type.STRING } },
+          explanation: { type: Type.STRING },
+        },
+        required: ['id', 'title', 'description', 'resolvedComponents', 'explanation'],
+      },
+    },
+  },
+  required: ['resolutions'],
 };
 
 // ─── System prompts ───────────────────────────────────────────────────────────
@@ -301,6 +335,22 @@ Rules:
 
 Output ONLY valid JSON:
 { "options": [ <ArchitectureOption>, <ArchitectureOption> ] }
+
+Do NOT add commentary outside the JSON.`;
+
+const RESOLVE_CONFLICTS_SYSTEM = `You are a hardware engineering assistant expert in solving DRC (design rule check) conflicts.
+Given a list of DRC conflicts and the current architecture, propose 1–3 concrete resolutions.
+
+Rules:
+- Each resolution MUST meaningfully reduce or eliminate conflicts. Show the full updated component list.
+- Propose options like: "Swap HC-SR04 for 3.3V variant", "Add a 3.3V/5V level shifter", or "Use a different sensor entirely".
+- Each resolution must be practical for a hobbyist to implement.
+- Title should be short and actionable.
+- Explanation should explicitly mention which conflict(s) it solves and why it works.
+- resolvedComponents must be the COMPLETE updated component list (including any added adapters/shifters).
+
+Output ONLY valid JSON:
+{ "resolutions": [ { "id": string, "title": string, "description": string, "resolvedComponents": string[], "explanation": string } ] }
 
 Do NOT add commentary outside the JSON.`;
 
@@ -513,7 +563,7 @@ async function rawSpecCall(provider: string, componentName: string, description:
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: SPEC_SYSTEM },
-        { role: 'user',   content: userPrompt },
+        { role: 'user', content: userPrompt },
       ],
     });
     return resp.choices[0].message.content ?? '{}';
@@ -615,6 +665,65 @@ async function callPlan(
 
   if ('__schema_error' in result) return result;
   return result.milestones;
+}
+
+async function rawResolveConflictsCall(provider: string, prompt: string): Promise<string> {
+  if (provider === 'openai') {
+    const client = openaiClient();
+    const resp = await client.chat.completions.create({
+      model: 'gpt-4o',
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: RESOLVE_CONFLICTS_SYSTEM },
+        { role: 'user', content: prompt },
+      ],
+    });
+    return resp.choices[0].message.content ?? '{"resolutions":[]}';
+  }
+
+  if (provider === 'anthropic') {
+    const client = anthropicClient();
+    const resp = await client.messages.create({
+      model: 'claude-opus-4-5',
+      max_tokens: 2048,
+      system: RESOLVE_CONFLICTS_SYSTEM,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const text = resp.content[0].type === 'text' ? resp.content[0].text : '{"resolutions":[]}';
+    const match = text.match(/\{[\s\S]*\}/);
+    return match ? match[0] : '{"resolutions":[]}';
+  }
+
+  return await geminiWithFallback({
+    contents: `${RESOLVE_CONFLICTS_SYSTEM}\n\n${prompt}`,
+    config: { responseMimeType: 'application/json', responseSchema: resolveConflictsSchema },
+  });
+}
+
+async function callResolveConflicts(
+  provider: string,
+  option: object,
+  violations: object[],
+): Promise<object[] | { __schema_error: true; message: string }> {
+  if (!hasApiKey(provider)) {
+    throw new Error(`API key missing for ${provider}. Please configure it in your .env file.`);
+  }
+
+  const optionStr = JSON.stringify(option);
+  const violationsStr = JSON.stringify(violations, null, 2);
+  const userPrompt = `Current architecture:\n${optionStr}\n\nConflicts to resolve:\n${violationsStr}`;
+
+  const result = await withSchemaValidation(
+    ZResolveConflictsResponse,
+    () => rawResolveConflictsCall(provider, userPrompt),
+    (err) => rawResolveConflictsCall(provider,
+      `${userPrompt}\n\n[CORRECTION NEEDED] Your previous response failed schema validation: ${err}. Return 1-3 resolutions as: { "resolutions": [{ "id": string, "title": string, "description": string, "resolvedComponents": string[], "explanation": string }] }`
+    ),
+    'resolve-conflicts',
+  );
+
+  if ('__schema_error' in result) return result;
+  return result.resolutions;
 }
 
 // ─── Express app ──────────────────────────────────────────────────────────────
@@ -734,6 +843,32 @@ async function startServer() {
       res.json(result);
     } catch (e: any) {
       console.error('[plan] error:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── POST /api/resolve-conflicts ──────────────────────────────────────────
+  // Given a architecture option and list of DRC violations, AI suggests 1–3 resolutions.
+  // Each resolution is a modified component list that reduces/eliminates conflicts.
+  app.post('/api/resolve-conflicts', async (req, res) => {
+    try {
+      const { option, violations } = req.body;
+      if (!option || !Array.isArray(violations)) {
+        res.status(400).json({ error: 'option and violations array are required' });
+        return;
+      }
+      const provider = resolveProvider(req);
+      console.log(`[resolve-conflicts] provider=${provider}`);
+
+      const result = await callResolveConflicts(provider, option, violations);
+
+      if (!Array.isArray(result) && '__schema_error' in result) {
+        res.status(422).json(result);
+        return;
+      }
+      res.json(result);
+    } catch (e: any) {
+      console.error('[resolve-conflicts] error:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
