@@ -187,7 +187,17 @@ function CodeView({
         </button>
       </div>
 
-      {/* verify_manually overlay banner (only after approval) */}
+      {/* Pre-approval soft banner */}
+      {!approved && option && (
+        <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-tertiary/8 border-b border-tertiary/20">
+          <Lock size={11} className="text-tertiary shrink-0" />
+          <span className="text-[11px] text-tertiary font-mono">
+            Preview — approve the architecture in Copilot to finalise this code
+          </span>
+        </div>
+      )}
+
+      {/* Post-approval: verify_manually warning */}
       {approved && confidence === 'verify_manually' && option && (
         <div className="shrink-0 flex items-center gap-2 px-3 py-2 bg-tertiary/8 border-b border-tertiary/20">
           <ShieldAlert size={12} className="text-tertiary shrink-0" />
@@ -197,7 +207,7 @@ function CodeView({
         </div>
       )}
 
-      {/* Manual edit disclosure banner (only after approval) */}
+      {/* Post-approval: manual edit note */}
       {approved && option && (
         <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-secondary/8 border-b border-secondary/20">
           <CheckCircle2 size={12} className="text-secondary shrink-0" />
@@ -207,7 +217,7 @@ function CodeView({
         </div>
       )}
 
-      {/* Monaco editor */}
+      {/* Monaco editor — always readable */}
       <div className="flex-1 relative">
         <Editor
           height="100%"
@@ -228,8 +238,6 @@ function CodeView({
             }
           }}
         />
-        {/* Module H: overlay until approved */}
-        {!approved && option && <PendingReviewOverlay />}
       </div>
     </div>
   );

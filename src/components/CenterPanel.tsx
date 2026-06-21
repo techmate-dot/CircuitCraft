@@ -2,7 +2,7 @@ import { Undo, Redo, ZoomIn, ZoomOut, PlusCircle, Activity, ShieldCheck, ShieldA
 import type { CenterView } from '../types';
 import { useCircuitStore } from '../store';
 import { resolvePinAssignments } from '../lib/pinMapper';
-import ReactFlow, { Background, Controls } from 'reactflow';
+import ReactFlow, { Background, Controls, useReactFlow, ReactFlowProvider } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { useRef, useEffect, useState, useCallback } from 'react';
 import * as Blockly from 'blockly';
@@ -19,52 +19,77 @@ interface CenterPanelProps {
 }
 
 export default function CenterPanel({ view }: CenterPanelProps) {
-  // Plan view is driven by App (appears once a milestone plan exists). When not
-  // in plan view, the user toggles between the Blockly editor and the generated
-  // schematic. Both are derived from the same validated pin assignments.
-  const [buildView, setBuildView] = useState<'blocks' | 'schematic'>('blocks');
-  const showPlan = view === 'plan';
+  const { plan } = useCircuitStore();
+  // Internal tab — syncs from view prop only when it says 'blocks' (option selected).
+  // Never auto-switches to 'plan'; user navigates there manually.
+  const [activeTab, setActiveTab] = useState<CenterView>(view === 'plan' ? 'blocks' : view);
+  const [planBadge, setPlanBadge] = useState(false);
+
+  useEffect(() => {
+    if (view === 'blocks') setActiveTab('blocks');
+    // 'plan' from App.tsx is ignored — user clicks Plan tab themselves
+  }, [view]);
+
+  useEffect(() => {
+    if (plan) setPlanBadge(true);
+  }, [!!plan]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const TABS: { id: CenterView; Icon: React.ElementType; label: string }[] = [
+    { id: 'blocks',    Icon: Boxes,        label: 'Blocks'    },
+    { id: 'schematic', Icon: Network,      label: 'Schematic' },
+    { id: 'plan',      Icon: CheckCircle2, label: 'Plan'      },
+  ];
 
   return (
-    <div className="w-full h-full flex flex-col relative">
-      {/* Floating Action Bar */}
-      <div className="absolute top-panel-padding right-panel-padding z-20 flex items-center gap-2">
-        {!showPlan && (
-          <div className="bg-surface border border-outline-variant rounded flex p-1 shadow-sm">
-            <button
-              onClick={() => setBuildView('blocks')}
-              title="Block editor"
-              className={`flex items-center gap-1 px-2 py-1 rounded font-mono text-[10px] uppercase tracking-wider transition-colors ${buildView === 'blocks' ? 'bg-secondary text-on-secondary' : 'text-on-surface-variant hover:bg-surface-container'}`}
-            >
-              <Boxes size={13} /> Blocks
-            </button>
-            <button
-              onClick={() => setBuildView('schematic')}
-              title="Generated schematic"
-              className={`flex items-center gap-1 px-2 py-1 rounded font-mono text-[10px] uppercase tracking-wider transition-colors ${buildView === 'schematic' ? 'bg-secondary text-on-secondary' : 'text-on-surface-variant hover:bg-surface-container'}`}
-            >
-              <Network size={13} /> Schematic
-            </button>
-          </div>
-        )}
-        <div className="bg-surface border border-outline-variant rounded flex p-1 shadow-sm opacity-90 hover:opacity-100 transition-opacity">
-          <button className="p-1 text-on-surface hover:bg-surface-container rounded" title="Undo">
-            <Undo size={18} />
-          </button>
-          <button className="p-1 text-on-surface hover:bg-surface-container rounded" title="Redo">
-            <Redo size={18} />
-          </button>
-          <div className="w-[1px] bg-outline-variant mx-1"></div>
-          <button className="p-1 text-on-surface hover:bg-surface-container rounded" title="Zoom In">
-            <ZoomIn size={18} />
-          </button>
-          <button className="p-1 text-on-surface hover:bg-surface-container rounded" title="Zoom Out">
-            <ZoomOut size={18} />
-          </button>
+    <div className="w-full h-full flex flex-col">
+      {/* ── Persistent 3-tab bar ──────────────────────────────────────────── */}
+      <div className="shrink-0 h-11 border-b border-outline-variant flex items-center justify-between px-2 bg-surface-container-low">
+        <div className="flex items-center gap-1 h-full">
+          {TABS.map(({ id, Icon, label }) => {
+            const disabled = id === 'plan' && !plan;
+            const active   = activeTab === id;
+            return (
+              <button
+                key={id}
+                disabled={disabled}
+                onClick={() => {
+                  setActiveTab(id);
+                  if (id === 'plan') setPlanBadge(false);
+                }}
+                className={`relative flex items-center gap-1.5 px-3 h-full border-b-2 font-mono text-[10px] uppercase tracking-wider transition-colors ${
+                  active
+                    ? 'border-secondary text-secondary bg-surface'
+                    : disabled
+                      ? 'border-transparent text-on-surface-variant/25 cursor-not-allowed'
+                      : 'border-transparent text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
+                }`}
+              >
+                <Icon size={12} />
+                {label}
+                {id === 'plan' && planBadge && !active && (
+                  <span className="absolute top-2 right-1.5 w-1.5 h-1.5 rounded-full bg-secondary" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Tool buttons */}
+        <div className="flex items-center gap-0.5">
+          <button className="p-1.5 text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded" title="Undo"><Undo size={15} /></button>
+          <button className="p-1.5 text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded" title="Redo"><Redo size={15} /></button>
+          <div className="w-px h-4 bg-outline-variant mx-1" />
+          <button className="p-1.5 text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded" title="Zoom In"><ZoomIn size={15} /></button>
+          <button className="p-1.5 text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded" title="Zoom Out"><ZoomOut size={15} /></button>
         </div>
       </div>
 
-      {showPlan ? <PlanCanvas /> : buildView === 'schematic' ? <SchematicCanvas /> : <BlocksCanvas />}
+      {/* ── Tab content ───────────────────────────────────────────────────── */}
+      <div className="flex-1 overflow-hidden">
+        {activeTab === 'plan'      ? <PlanCanvas />      :
+         activeTab === 'schematic' ? <SchematicCanvas /> :
+                                     <BlocksCanvas />}
+      </div>
     </div>
   );
 }
@@ -318,6 +343,20 @@ const registerCustomBlocks = () => {
   Blockly.common.defineBlocksWithJsonArray([
     ...blockDefinitions,
     {
+      type: 'arduino_setup',
+      message0: 'void setup() %1',
+      args0: [{ type: 'input_statement', name: 'SETUP_BLOCKS' }],
+      style: 'arduino_setup_blocks',
+      tooltip: 'Code here runs once when the Arduino starts up.',
+    },
+    {
+      type: 'arduino_loop',
+      message0: 'void loop() %1',
+      args0: [{ type: 'input_statement', name: 'LOOP_BLOCKS' }],
+      style: 'arduino_loop_blocks',
+      tooltip: 'Code here repeats forever — your main program logic.',
+    },
+    {
       type: 'hardware_delay',
       message0: 'delay %1 ms',
       args0: [{ type: 'field_number', name: 'DELAY_MS', value: 1000, min: 0 }],
@@ -373,7 +412,9 @@ function getObsidianGoldTheme() {
       variable_blocks: { colourPrimary: '#111214', colourSecondary: '#191a1b', colourTertiary: '#9da3a6' },
       variable_dynamic_blocks: { colourPrimary: '#111214', colourSecondary: '#191a1b', colourTertiary: '#9da3a6' },
       procedure_blocks: { colourPrimary: '#111214', colourSecondary: '#191a1b', colourTertiary: '#9da3a6' },
-      colour_blocks:   { colourPrimary: '#111214', colourSecondary: '#191a1b', colourTertiary: '#9da3a6' },
+      colour_blocks:        { colourPrimary: '#111214', colourSecondary: '#191a1b', colourTertiary: '#9da3a6' },
+      arduino_setup_blocks: { colourPrimary: '#0e1420', colourSecondary: '#0e1420', colourTertiary: '#4a9eff' },
+      arduino_loop_blocks:  { colourPrimary: '#0e1a10', colourSecondary: '#0e1a10', colourTertiary: '#56c27a' },
     } as any,
     categoryStyles: {},
     componentStyles: {
@@ -438,6 +479,20 @@ const toolbox = {
 
 const initializeWorkspaceBlocks = (workspace: any, option: any) => {
   workspace.clear();
+
+  // Always place the two persistent Arduino structure containers
+  const setupBlock = workspace.newBlock('arduino_setup');
+  setupBlock.setDeletable(false);
+  setupBlock.initSvg();
+  setupBlock.render();
+  setupBlock.moveBy(30, 30);
+
+  const loopBlock = workspace.newBlock('arduino_loop');
+  loopBlock.setDeletable(false);
+  loopBlock.initSvg();
+  loopBlock.render();
+  loopBlock.moveBy(30, 220);
+
   if (!option) return;
 
   const boardComponent = option.components.find((c: string) => {
@@ -445,55 +500,49 @@ const initializeWorkspaceBlocks = (workspace: any, option: any) => {
     return s && s.is_microcontroller;
   });
   const hostBoardName = boardComponent ? findSpec(boardComponent)?.name : 'ESP32';
-  
-  const boardBlock = workspace.newBlock(`hardware_${hostBoardName}`);
-  boardBlock.initSvg();
-  boardBlock.render();
-  boardBlock.moveBy(50, 50);
-
-  let lastBlock = boardBlock;
 
   const assignments = resolvePinAssignments(option);
   const processedComponents = new Set<string>();
+  const loopInput = loopBlock.getInput('LOOP_BLOCKS');
+  let prevBlock: any = null;
 
   for (const assignment of assignments) {
     const spec = findSpec(assignment.component);
     if (!spec || spec.is_microcontroller) continue;
-    
     if (processedComponents.has(spec.name)) continue;
     processedComponents.add(spec.name);
 
     const blockType = `hardware_${spec.name}`;
     const block = workspace.newBlock(blockType);
-    
+
     if (spec.name === 'HC-SR04') {
       const hcsr04 = assignments.filter(a => a.component === 'HC-SR04');
-      const trigPin = hcsr04[0]?.pin || 'None';
-      const echoPin = hcsr04[1]?.pin || trigPin || 'None';
-      block.setFieldValue(trigPin, 'TRIG_PIN');
-      block.setFieldValue(echoPin, 'ECHO_PIN');
+      block.setFieldValue(hcsr04[0]?.pin || 'None', 'TRIG_PIN');
+      block.setFieldValue(hcsr04[1]?.pin || hcsr04[0]?.pin || 'None', 'ECHO_PIN');
     } else if (spec.name === 'LCD_I2C') {
       const isUno = hostBoardName === 'Arduino_Uno';
       block.setFieldValue(isUno ? 'A4' : 'GPIO21', 'SDA_PIN');
       block.setFieldValue(isUno ? 'A5' : 'GPIO22', 'SCL_PIN');
       block.setFieldValue('Temp & Humid', 'LINE_1');
       block.setFieldValue('Monitoring...', 'LINE_2');
-    } else {
-      if (assignment.pin !== 'UNASSIGNED') {
-        block.setFieldValue(assignment.pin, 'PIN');
-      }
+    } else if (assignment.pin !== 'UNASSIGNED') {
+      try { block.setFieldValue(assignment.pin, 'PIN'); } catch { /* field may not exist for all block types */ }
     }
 
     block.initSvg();
     block.render();
 
-    const parentConnection = lastBlock.nextConnection;
-    const childConnection = block.previousConnection;
-    if (parentConnection && childConnection) {
-      parentConnection.connect(childConnection);
+    try {
+      if (!prevBlock) {
+        loopInput.connection.connect(block.previousConnection);
+      } else {
+        prevBlock.nextConnection.connect(block.previousConnection);
+      }
+    } catch {
+      // If a block can't connect (e.g., no previousConnection), place it freely
+      block.moveBy(350, 30 + processedComponents.size * 70);
     }
-    
-    lastBlock = block;
+    prevBlock = block;
   }
 };
 
@@ -691,7 +740,7 @@ function BlocksCanvas() {
       });
     });
 
-    if (selectedOption) initializeWorkspaceBlocks(workspace, selectedOption);
+    initializeWorkspaceBlocks(workspace, selectedOption ?? null);
 
     // Initial code generation after scaffold — runs synchronously so
     // RightPanel's Monaco editor is populated before the user sees it.
@@ -1362,6 +1411,31 @@ function SchematicCanvas() {
 }
 
 // ─── Plan Canvas — Module F: left-to-right ReactFlow graph ───────────────────
+function PlanCanvasHeader({ milestoneCount }: { milestoneCount: number }) {
+  const { fitView } = useReactFlow();
+  return (
+    <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 py-2 bg-surface/90 backdrop-blur border-b border-outline-variant/40">
+      <span className="font-mono text-[10px] uppercase tracking-wider text-on-surface-variant">
+        Milestone Plan · {milestoneCount} steps
+      </span>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => fitView({ padding: 0.3, duration: 400 })}
+          className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono uppercase tracking-wider text-on-surface-variant hover:text-secondary hover:bg-secondary/10 transition-colors border border-outline-variant/40"
+          title="Center all nodes in view"
+        >
+          <Network size={11} />
+          Center
+        </button>
+        <div className="flex items-center gap-1.5 text-secondary">
+          <CheckCircle2 size={11} />
+          <span className="font-mono text-[9px] uppercase tracking-wider">Architecture Approved</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PlanCanvas() {
   const { plan, currentMilestoneId } = useCircuitStore();
 
@@ -1430,21 +1504,26 @@ function PlanCanvas() {
     }));
 
   return (
-    <div className="flex-1 w-full h-full schematic-bg relative">
-      {/* Plan header */}
-      <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 py-2 bg-surface/90 backdrop-blur border-b border-outline-variant/40">
-        <span className="font-mono text-[10px] uppercase tracking-wider text-on-surface-variant">
-          Milestone Plan · {plan.milestones.length} steps
-        </span>
-        <div className="flex items-center gap-1.5 text-secondary">
-          <CheckCircle2 size={11} />
-          <span className="font-mono text-[9px] uppercase tracking-wider">Architecture Approved</span>
-        </div>
+    <ReactFlowProvider>
+      <div className="flex-1 w-full h-full schematic-bg relative">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          fitView
+          fitViewOptions={{ padding: 0.3 }}
+          panOnDrag={true}
+          zoomOnScroll={true}
+          zoomOnPinch={true}
+          panOnScroll={false}
+          minZoom={0.2}
+          maxZoom={2}
+          attributionPosition="bottom-right"
+        >
+          <PlanCanvasHeader milestoneCount={plan.milestones.length} />
+          <Background color="oklch(var(--color-outline-variant))" gap={24} />
+          <Controls position="bottom-left" style={{ marginBottom: 8, marginLeft: 8 }} />
+        </ReactFlow>
       </div>
-      <ReactFlow nodes={nodes} edges={edges} fitView fitViewOptions={{ padding: 0.3 }}>
-        <Background color="oklch(var(--color-outline-variant))" gap={24} />
-        <Controls />
-      </ReactFlow>
-    </div>
+    </ReactFlowProvider>
   );
 }

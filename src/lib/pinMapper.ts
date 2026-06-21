@@ -63,6 +63,26 @@ export function resolvePinAssignments(option: ArchitectureOption): PinAssignment
       const boardPin = availablePins.find(
         p => p.name.toUpperCase() === explicitPin || p.name.replace('GPIO', 'D').toUpperCase() === explicitPin
       );
+
+      // If the LLM specified a reserved pin, ignore it and auto-allocate instead.
+      // Reserved pins (UART/USB/boot-strapping) must never be used regardless of what the LLM outputs.
+      if (boardPin?.reserved) {
+        const needed = specPinTypes.length > 0 ? primaryPinType(specPinTypes) : 'digital';
+        const freePin = availablePins.find(
+          p => !p.reserved && !usedPins.has(p.name) && p.types.includes(needed as any)
+        );
+        const resolvedPin = freePin ? freePin.name : 'UNASSIGNED';
+        if (freePin) usedPins.add(freePin.name);
+        assignments.push({
+          component: spec.name,
+          rawLabel: componentStr,
+          pin: resolvedPin,
+          pinType: needed,
+          role: inferRole(componentStr),
+        });
+        continue;
+      }
+
       const resolvedPinType = boardPin
         ? primaryPinType(boardPin.types as PinAssignment['pinType'][])
         : primaryPinType(specPinTypes);

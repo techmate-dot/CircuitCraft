@@ -156,10 +156,28 @@ export const COMPONENTS: ComponentSpec[] = [
     name: 'Buzzer',
     category: 'Actuators',
     pin_types_required: ['digital'],
-    voltage: 5,
+    voltage: 3.3,
     current_ma: 30,
     requires_driver: false,
-    notes: 'Piezo buzzer — can be driven directly from a digital pin with a transistor for louder output.',
+    notes: 'Active piezo buzzer — 3.3 V compatible; can be driven directly from a GPIO. Use a transistor for louder output.',
+  },
+  {
+    name: 'JSN-SR04T',
+    category: 'Sensors',
+    pin_types_required: ['digital'],
+    voltage: 3.3,
+    current_ma: 8,
+    requires_driver: false,
+    notes: 'Waterproof ultrasonic distance sensor — 3.3 V compatible variant. Requires Trig (output) + Echo (input) pins. Echo is 3.3 V level-safe with ESP32.',
+  },
+  {
+    name: 'USB-C Wall Adapter',
+    category: 'Power',
+    pin_types_required: [],
+    voltage: 5,
+    current_ma: 0,
+    requires_driver: false,
+    notes: 'USB-C power supply — no GPIO connection needed. Powers the board via the USB-C port.',
   },
   {
     name: 'Relay_Coil',
@@ -269,7 +287,9 @@ export function findSpec(componentName: string): ComponentSpec | undefined {
   if (norm.includes('driver') || norm.includes('l298n') || norm.includes('uln2003'))    return COMPONENTS.find(c => c.name === 'Motor_Driver');
   if (norm.includes('led'))                                                              return COMPONENTS.find(c => c.name === 'LED');
   if (norm.includes('pir') || norm.includes('sr501') || norm.includes('motion'))        return COMPONENTS.find(c => c.name === 'PIR_Sensor');
+  if (norm.includes('jsn') || norm.includes('waterproof') && norm.includes('ultrasonic')) return COMPONENTS.find(c => c.name === 'JSN-SR04T');
   if (norm.includes('hc-sr04') || norm.includes('sr04') || norm.includes('ultrasonic')) return COMPONENTS.find(c => c.name === 'HC-SR04');
+  if (norm.includes('usb-c') || norm.includes('usb c') || norm.includes('wall adapter') || norm.includes('power adapter') || norm.includes('power supply')) return COMPONENTS.find(c => c.name === 'USB-C Wall Adapter');
   if (norm.includes('buzzer'))                                                           return COMPONENTS.find(c => c.name === 'Buzzer');
   if (norm.includes('dht11') || norm.includes('dht') || norm.includes('humidity'))      return COMPONENTS.find(c => c.name === 'DHT11');
   if (norm.includes('photoresistor') || norm.includes('ldr') || norm.includes('light sensor')) return COMPONENTS.find(c => c.name === 'Photoresistor');

@@ -89,19 +89,13 @@ export default function App() {
   const { plan, selectedOptionId, approved } = useCircuitStore();
 
   useEffect(() => {
-    if (plan) {
-      // Plan just arrived → show the plan node graph; right panel shows assembly guide
-      setCenterView('plan');
-      setActiveRightTab('guide');
-    } else if (selectedOptionId && !plan) {
-      // Option selected, no plan yet → show blocks canvas (with pending overlay) + code tab
+    if (selectedOptionId) {
+      // Option selected → show blocks + code immediately.
+      // Plan tab gets a badge in CenterPanel when plan arrives; user navigates there manually.
       setCenterView('blocks');
       setActiveRightTab('code');
-    } else if (activeNav === 'assistant' && !selectedOptionId) {
-      setCenterView('blocks');
     }
-    // When approved changes, no view switch needed — overlays just disappear
-  }, [activeNav, plan, selectedOptionId, approved]);
+  }, [selectedOptionId]);
 
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-background selection:bg-secondary selection:text-on-secondary">

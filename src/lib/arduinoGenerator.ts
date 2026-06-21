@@ -6,24 +6,43 @@ const arduinoGenerator = new Blockly.Generator('ARDUINO') as any;
 arduinoGenerator.ORDER_ATOMIC = 0;
 arduinoGenerator.ORDER_NONE = 99;
 
+// Silently skip blocks with no registered generator (e.g., board label blocks)
+(arduinoGenerator as any).ignoreUnknownBlocks = true;
+
 arduinoGenerator.init = function(this: any, workspace: any) {
   this.setupLines_ = [];
   this.includeLines_ = [];
+  this.setupBlockCode_ = '';
 };
 
 arduinoGenerator.finish = function(this: any, code: string) {
   const includes = Array.from(new Set(this.includeLines_ as string[])).join('\n');
-  const setup = Array.from(new Set(this.setupLines_ as string[])).join('\n  ');
+  const pinSetup = Array.from(new Set(this.setupLines_ as string[]));
+  const setupExtra = (this.setupBlockCode_ as string) || '';
+
+  const setupLines = ['  Serial.begin(115200);'];
+  if (pinSetup.length > 0) setupLines.push(`  ${pinSetup.join('\n  ')}`);
+  if (setupExtra.trim()) setupLines.push(setupExtra.trimEnd());
 
   return `// Live Generated Arduino C++ Sketch (Blockly Workspace)\n\n` +
          `${includes ? includes + '\n\n' : ''}` +
          `void setup() {\n` +
-         `  Serial.begin(115200);\n` +
-         `  ${setup ? setup + '\n' : ''}` +
+         `${setupLines.join('\n')}\n` +
          `}\n\n` +
          `void loop() {\n` +
-         `${code || '  // Add your project logic here\n'}` +
+         `${code || '  // Add your loop logic here\n'}` +
          `}\n`;
+};
+
+// ── Arduino structure containers ──────────────────────────────────────────────
+arduinoGenerator.forBlock['arduino_setup'] = function(block: any, generator: any) {
+  const body = generator.statementToCode(block, 'SETUP_BLOCKS');
+  generator.setupBlockCode_ = body;
+  return '';
+};
+
+arduinoGenerator.forBlock['arduino_loop'] = function(block: any, generator: any) {
+  return generator.statementToCode(block, 'LOOP_BLOCKS') || '  // Add your loop logic here\n';
 };
 
 // 1. LED Block generator
