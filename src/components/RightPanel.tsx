@@ -142,10 +142,23 @@ function CodeView({
       ? generateArduinoCode(assignments, option.label, confidence)
       : `// Select an architecture option in the Copilot panel to generate code.\n// Pin numbers are validated against the component spec table before appearing here.`);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
+  const handleCopy = async () => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(code);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = code;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        textArea.remove();
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch (err) {
+      console.error('Copy failed:', err);
+    }
   };
 
   return (
@@ -166,9 +179,8 @@ function CodeView({
         </div>
         <button
           onClick={handleCopy}
-          disabled={!approved}
-          className="flex items-center gap-1.5 p-1.5 text-on-surface-variant hover:text-secondary hover:bg-surface-container rounded transition-colors disabled:opacity-30"
-          title={approved ? 'Copy Code' : 'Approve to unlock'}
+          className="flex items-center gap-1.5 p-1.5 text-on-surface-variant hover:text-secondary hover:bg-surface-container rounded transition-colors"
+          title="Copy Code"
         >
           {copied ? <CheckCircle2 size={14} className="text-secondary" /> : <Copy size={14} />}
           <span className="font-mono text-[10px]">{copied ? 'Copied!' : 'Copy'}</span>
@@ -205,7 +217,7 @@ function CodeView({
             minimap: { enabled: false },
             fontSize: 12,
             fontFamily: 'JetBrains Mono, monospace',
-            readOnly: !approved,
+            readOnly: false,
             scrollBeyondLastLine: false,
             wordWrap: 'on',
           }}

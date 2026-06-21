@@ -28,11 +28,7 @@ export function getActiveWorkspace(): Blockly.WorkspaceSvg | null {
  * Create a block of the given type at workspace coordinates (wsX, wsY).
  * Safe to call even if no workspace is active — returns false and is a no-op.
  */
-export function addBlockAt(
-  blockType: string,
-  wsX: number,
-  wsY: number,
-): boolean {
+export function addBlockAt(blockType: string, wsX: number, wsY: number): boolean {
   if (!_ws) return false;
   try {
     const block = _ws.newBlock(blockType) as any;
@@ -47,35 +43,39 @@ export function addBlockAt(
 }
 
 /**
- * Drop a block from an external HTML5 DragEvent onto the workspace.
- * Reads blockType from dataTransfer, converts clientX/Y to workspace coordinates.
+ * Drop a block from an HTML5 DragEvent onto the workspace.
+ * Reads blockType from dataTransfer, converts clientX/Y → workspace coords.
+ *
+ * Coordinate derivation (Blockly v13):
+ *   workspace.scrollX/Y = SVG-pixel translation of the workspace group,
+ *   which already includes the toolbox width offset. This is set via
+ *   workspace.translate(x, y) and reflects both the initial toolbox shift
+ *   AND any user pan.
+ *
+ *   block at workspace (wx, wy) → SVG pixels (wx*scale + scrollX, wy*scale + scrollY)
+ *   Inverse: wx = (svgX - scrollX) / scale
  *
  * Accepts a duck-typed event so it works with both native DragEvent and
- * React.DragEvent<HTMLDivElement> without needing to cast at the call site.
+ * React.DragEvent<HTMLDivElement> without casting at the call site.
  */
 export function dropBlockFromEvent(e: {
   clientX: number;
   clientY: number;
   dataTransfer: DataTransfer | null;
 }): boolean {
-  const blockType =
-    e.dataTransfer?.getData('application/x-circuit-block') ?? '';
+  const blockType = e.dataTransfer?.getData('application/x-circuit-block') ?? '';
   if (!blockType || !_ws) return false;
 
+  // Client → SVG pixel offset (SVG is positioned at the blocklyDiv origin)
   const svg = _ws.getParentSvg() as SVGSVGElement;
-  const ctm = _ws.getInverseScreenCTM();
+  const rect = svg.getBoundingClientRect();
+  const svgX = e.clientX - rect.left;
+  const svgY = e.clientY - rect.top;
 
-  // Convert client → SVG point using the inverse screen CTM
-  let pt = svg.createSVGPoint();
-  pt.x = e.clientX;
-  pt.y = e.clientY;
-  if (ctm) pt = pt.matrixTransform(ctm);
-
-  // Convert SVG point → workspace coordinates (accounts for pan + zoom)
-  const metrics = _ws.getMetricsManager().getAbsoluteMetrics();
+  // SVG pixel → workspace coordinates
   const scale = _ws.getScale();
-  const wsX = (pt.x - metrics.left) / scale + (_ws as any).scrollX;
-  const wsY = (pt.y - metrics.top) / scale + (_ws as any).scrollY;
+  const wsX = (svgX - _ws.scrollX) / scale;
+  const wsY = (svgY - _ws.scrollY) / scale;
 
   return addBlockAt(blockType, wsX, wsY);
 }
@@ -83,15 +83,30 @@ export function dropBlockFromEvent(e: {
 /**
  * Place a block near the top-left of the visible workspace viewport.
  * Used when the user clicks a block in the panel rather than dragging it.
- * getViewMetrics(true) returns bounds in workspace coordinates.
+ *
+ * getViewMetrics() returns view bounds in workspace coordinates when passed
+ * `true` (Blockly v13 API). Falls back to scrollX/Y math if unavailable.
  */
 export function addBlockNearViewport(blockType: string): boolean {
   if (!_ws) return false;
 
-  const vm = (_ws.getMetricsManager().getViewMetrics as any)(true) ??
-             _ws.getMetricsManager().getViewMetrics();
-  const wsX = ((vm as any).left ?? 40) + 40;
-  const wsY = ((vm as any).top  ?? 40) + 80;
+  let wsX = 40;
+  let wsY = 80;
+  try {
+    // getViewMetrics(true) = workspace coordinate space
+    const vm = (_ws.getMetricsManager().getViewMetrics as any)(true) as any;
+    if (vm && typeof vm.left === 'number') {
+      wsX = vm.left + 40;
+      wsY = vm.top + 40;
+    } else {
+      // Fallback: infer from scrollX/Y
+      const scale = _ws.getScale();
+      wsX = (-_ws.scrollX / scale) + 40;
+      wsY = (-_ws.scrollY / scale) + 40;
+    }
+  } catch {
+    // Use defaults
+  }
 
   return addBlockAt(blockType, wsX, wsY);
 }

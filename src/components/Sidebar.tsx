@@ -1,4 +1,4 @@
-import { MessageSquare, Puzzle, Terminal, Wrench, Plus, Book, LogOut } from 'lucide-react';
+import { MessageSquare, Wrench, Plus, Book, LogOut } from 'lucide-react';
 import type { NavTab } from '../types';
 
 interface SidebarProps {
@@ -9,8 +9,6 @@ interface SidebarProps {
 export default function Sidebar({ activeNav, setActiveNav }: SidebarProps) {
   const navItems = [
     { id: 'assistant', icon: MessageSquare, label: 'Assistant' },
-    { id: 'logic', icon: Puzzle, label: 'Logic' },
-    { id: 'hardware', icon: Terminal, label: 'Hardware' },
     { id: 'debug', icon: Wrench, label: 'Debug' },
   ] as const;
 

@@ -1,4 +1,4 @@
-import { Undo, Redo, ZoomIn, ZoomOut, PlusCircle, Activity, ShieldCheck, ShieldAlert, Cpu, Lock, CheckCircle2, Boxes, Network } from 'lucide-react';
+import { Undo, Redo, ZoomIn, ZoomOut, PlusCircle, Activity, ShieldCheck, ShieldAlert, Cpu, Lock, CheckCircle2, Boxes, Network, X } from 'lucide-react';
 import type { CenterView } from '../types';
 import { useCircuitStore } from '../store';
 import { resolvePinAssignments } from '../lib/pinMapper';
@@ -204,16 +204,16 @@ const registerCustomBlocks = () => {
   // Generate block definitions from ComponentSpecs deterministically
   const blockDefinitions = COMPONENTS.map(spec => {
     const isController = spec.is_microcontroller;
-    const colourMap: Record<string, string> = {
-      'Sensors': '#b87333',
-      'Actuators': '#d4af37',
-      'Control': '#9da3a6',
-      'Power': '#cc6633'
+    const styleMap: Record<string, string> = {
+      'Sensors':   'sensor_blocks',
+      'Actuators': 'actuator_blocks',
+      'Control':   'control_blocks',
+      'Power':     'power_blocks',
     };
 
     const blockJson: any = {
       type: `hardware_${spec.name}`,
-      colour: colourMap[spec.category] || '#9da3a6',
+      style: styleMap[spec.category] || 'control_blocks',
       tooltip: spec.notes || spec.name,
     };
 
@@ -323,7 +323,7 @@ const registerCustomBlocks = () => {
       args0: [{ type: 'field_number', name: 'DELAY_MS', value: 1000, min: 0 }],
       previousStatement: null,
       nextStatement: null,
-      colour: '#d4af37',
+      style: 'timing_blocks',
       tooltip: 'Pause execution for the given number of milliseconds',
     },
     {
@@ -332,7 +332,7 @@ const registerCustomBlocks = () => {
       args0: [{ type: 'field_input', name: 'TEXT', text: 'Hello' }],
       previousStatement: null,
       nextStatement: null,
-      colour: '#9da3a6',
+      style: 'serial_blocks',
       tooltip: 'Print a line to the Serial monitor',
     },
   ]);
@@ -357,7 +357,24 @@ function getObsidianGoldTheme() {
   obsidianGoldTheme = Blockly.Theme.defineTheme('obsidian_gold', {
     name: 'obsidian_gold',
     base: baseTheme,
-    blockStyles: {},
+    blockStyles: {
+      // Hardware categories — dark body, colored outline (colourTertiary = border/shadow in Geras)
+      sensor_blocks:   { colourPrimary: '#111214', colourSecondary: '#1c1a17', colourTertiary: '#b87333' },
+      actuator_blocks: { colourPrimary: '#111214', colourSecondary: '#1c1b10', colourTertiary: '#d4af37' },
+      control_blocks:  { colourPrimary: '#111214', colourSecondary: '#191a1b', colourTertiary: '#9da3a6' },
+      power_blocks:    { colourPrimary: '#111214', colourSecondary: '#1c1612', colourTertiary: '#cc6633' },
+      timing_blocks:   { colourPrimary: '#111214', colourSecondary: '#1c1b10', colourTertiary: '#d4af37' },
+      serial_blocks:   { colourPrimary: '#111214', colourSecondary: '#191a1b', colourTertiary: '#9da3a6' },
+      // Standard Blockly block categories — override Classic with same dark style
+      logic_blocks:    { colourPrimary: '#111214', colourSecondary: '#12181c', colourTertiary: '#4cd7f6' },
+      loop_blocks:     { colourPrimary: '#111214', colourSecondary: '#12181c', colourTertiary: '#4cd7f6' },
+      math_blocks:     { colourPrimary: '#111214', colourSecondary: '#16121c', colourTertiary: '#c678dd' },
+      text_blocks:     { colourPrimary: '#111214', colourSecondary: '#191a1b', colourTertiary: '#9da3a6' },
+      variable_blocks: { colourPrimary: '#111214', colourSecondary: '#191a1b', colourTertiary: '#9da3a6' },
+      variable_dynamic_blocks: { colourPrimary: '#111214', colourSecondary: '#191a1b', colourTertiary: '#9da3a6' },
+      procedure_blocks: { colourPrimary: '#111214', colourSecondary: '#191a1b', colourTertiary: '#9da3a6' },
+      colour_blocks:   { colourPrimary: '#111214', colourSecondary: '#191a1b', colourTertiary: '#9da3a6' },
+    } as any,
     categoryStyles: {},
     componentStyles: {
       workspaceBackgroundColour: '#121214',
@@ -377,30 +394,45 @@ function getObsidianGoldTheme() {
 const toolbox = {
   kind: "categoryToolbox",
   contents: [
+    { kind: "category", name: "Sensors",   custom: "SENSORS_DYNAMIC",   colour: "#b87333" },
+    { kind: "category", name: "Actuators", custom: "ACTUATORS_DYNAMIC", colour: "#d4af37" },
+    { kind: "category", name: "Control",   custom: "CONTROL_DYNAMIC",   colour: "#9da3a6" },
+    { kind: "category", name: "Power",     custom: "POWER_DYNAMIC",     colour: "#cc6633" },
+    { kind: "sep" },
     {
-      kind: "category",
-      name: "Sensors",
-      custom: "SENSORS_DYNAMIC",
-      colour: "#b87333"
+      kind: "category", name: "Timing", colour: "#d4af37",
+      contents: [
+        { kind: "block", type: "hardware_delay" },
+        { kind: "block", type: "hardware_serial_print" },
+      ]
     },
     {
-      kind: "category",
-      name: "Actuators",
-      custom: "ACTUATORS_DYNAMIC",
-      colour: "#d4af37"
+      kind: "category", name: "Logic", colour: "#4cd7f6",
+      contents: [
+        { kind: "block", type: "controls_if" },
+        { kind: "block", type: "logic_compare" },
+        { kind: "block", type: "logic_operation" },
+        { kind: "block", type: "logic_negate" },
+        { kind: "block", type: "logic_boolean" },
+      ]
     },
     {
-      kind: "category",
-      name: "Control",
-      custom: "CONTROL_DYNAMIC",
-      colour: "#9da3a6"
+      kind: "category", name: "Loops", colour: "#4cd7f6",
+      contents: [
+        { kind: "block", type: "controls_repeat_ext" },
+        { kind: "block", type: "controls_whileUntil" },
+        { kind: "block", type: "controls_for" },
+      ]
     },
     {
-      kind: "category",
-      name: "Power",
-      custom: "POWER_DYNAMIC",
-      colour: "#cc6633"
-    }
+      kind: "category", name: "Math", colour: "#c678dd",
+      contents: [
+        { kind: "block", type: "math_number" },
+        { kind: "block", type: "math_arithmetic" },
+        { kind: "block", type: "math_modulo" },
+      ]
+    },
+    { kind: "category", name: "Variables", custom: "VARIABLE", colour: "#9da3a6" },
   ]
 };
 
@@ -480,13 +512,15 @@ function BlocksCanvas() {
   const blocklyRef  = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<any>(null);
 
+  const [hintDismissed, setHintDismissed] = useState(false);
+
   // State for the on-demand block generator panel
   const [genPanel, setGenPanel] = useState<{ open: boolean; category: string }>({
     open: false, category: 'Sensors',
   });
 
   useEffect(() => {
-    if (!selectedOption || !blocklyRef.current) return;
+    if (!blocklyRef.current) return;
 
     registerCustomBlocks();
 
@@ -502,6 +536,7 @@ function BlocksCanvas() {
     const workspace = Blockly.inject(blocklyRef.current, {
       toolbox: toolbox,
       theme: getObsidianGoldTheme(),
+      renderer: 'geras',
       grid: {
         spacing: 24,
         length: 3,
@@ -524,116 +559,126 @@ function BlocksCanvas() {
     setActiveWorkspace(workspace as Blockly.WorkspaceSvg);
 
     workspace.registerToolboxCategoryCallback('SENSORS_DYNAMIC', () => {
-      const { customComponents: runtimeComps } = useCircuitStore.getState();
+      const { customComponents: runtimeComps, options: storeOpts, selectedOptionId: storeOptId, swapSimulation: storeSim } = useCircuitStore.getState();
+      const currentOption = storeSim.active && storeSim.simulatedOption
+        ? storeSim.simulatedOption
+        : storeOpts.find(o => o.id === storeOptId);
       const list: any[] = [];
-      const assignments = resolvePinAssignments(selectedOption);
       const processed = new Set<string>();
-      const activeSensors = assignments.filter(a => {
-        const spec = findSpec(a.component);
-        return spec && spec.category === 'Sensors';
-      });
 
-      for (const a of activeSensors) {
-        const spec = findSpec(a.component)!;
-        if (processed.has(spec.name)) continue;
-        processed.add(spec.name);
-
-        const defaultFields: any = {};
-        if (spec.name === 'HC-SR04') {
-          const hcsr04 = assignments.filter(x => x.component === 'HC-SR04');
-          defaultFields['TRIG_PIN'] = hcsr04[0]?.pin || 'None';
-          defaultFields['ECHO_PIN'] = hcsr04[1]?.pin || hcsr04[0]?.pin || 'None';
-        } else if (a.pin !== 'UNASSIGNED') {
-          defaultFields['PIN'] = a.pin;
+      if (currentOption) {
+        const assignments = resolvePinAssignments(currentOption);
+        for (const a of assignments.filter(a => { const s = findSpec(a.component); return s && s.category === 'Sensors'; })) {
+          const spec = findSpec(a.component)!;
+          if (processed.has(spec.name)) continue;
+          processed.add(spec.name);
+          const defaultFields: any = {};
+          if (spec.name === 'HC-SR04') {
+            const hcsr04 = assignments.filter(x => x.component === 'HC-SR04');
+            defaultFields['TRIG_PIN'] = hcsr04[0]?.pin || 'None';
+            defaultFields['ECHO_PIN'] = hcsr04[1]?.pin || hcsr04[0]?.pin || 'None';
+          } else if (a.pin !== 'UNASSIGNED') {
+            defaultFields['PIN'] = a.pin;
+          }
+          list.push({ kind: 'block', type: `hardware_${spec.name}`, fields: defaultFields });
         }
-        list.push({ kind: 'block', type: `hardware_${spec.name}`, fields: defaultFields });
-      }
-
-      // Runtime-generated sensor blocks
-      for (const spec of runtimeComps.filter(c => c.category === 'Sensors')) {
-        if (!processed.has(spec.name)) {
+      } else {
+        for (const spec of COMPONENTS.filter(c => c.category === 'Sensors')) {
           list.push({ kind: 'block', type: `hardware_${spec.name}` });
         }
       }
 
+      for (const spec of runtimeComps.filter(c => c.category === 'Sensors')) {
+        if (!processed.has(spec.name)) list.push({ kind: 'block', type: `hardware_${spec.name}` });
+      }
       list.push({ kind: 'button', text: '+ Generate Block…', callbackKey: 'GEN_BLOCK_Sensors' });
       return list;
     });
 
     workspace.registerToolboxCategoryCallback('ACTUATORS_DYNAMIC', () => {
-      const { customComponents: runtimeComps } = useCircuitStore.getState();
+      const { customComponents: runtimeComps, options: storeOpts, selectedOptionId: storeOptId, swapSimulation: storeSim } = useCircuitStore.getState();
+      const currentOption = storeSim.active && storeSim.simulatedOption
+        ? storeSim.simulatedOption
+        : storeOpts.find(o => o.id === storeOptId);
       const list: any[] = [];
-      const assignments = resolvePinAssignments(selectedOption);
       const processed = new Set<string>();
-      const activeActuators = assignments.filter(a => {
-        const spec = findSpec(a.component);
-        return spec && spec.category === 'Actuators';
-      });
 
-      for (const a of activeActuators) {
-        const spec = findSpec(a.component)!;
-        if (processed.has(spec.name)) continue;
-        processed.add(spec.name);
-
-        const defaultFields: any = {};
-        if (spec.name === 'LCD_I2C' || spec.name === 'OLED_I2C') {
-          const boardComp = selectedOption.components.find((c: string) => {
-            const s = findSpec(c);
-            return s && s.is_microcontroller;
-          });
-          const isUno = boardComp && findSpec(boardComp)?.name === 'Arduino_Uno';
-          defaultFields['SDA_PIN'] = isUno ? 'A4' : 'GPIO21';
-          defaultFields['SCL_PIN'] = isUno ? 'A5' : 'GPIO22';
-          defaultFields['LINE_1'] = spec.name === 'LCD_I2C' ? 'Temp & Humid' : 'System OK';
-          defaultFields['LINE_2'] = spec.name === 'LCD_I2C' ? 'Monitoring...' : 'Active';
-        } else if (a.pin !== 'UNASSIGNED') {
-          defaultFields['PIN'] = a.pin;
+      if (currentOption) {
+        const assignments = resolvePinAssignments(currentOption);
+        for (const a of assignments.filter(a => { const s = findSpec(a.component); return s && s.category === 'Actuators'; })) {
+          const spec = findSpec(a.component)!;
+          if (processed.has(spec.name)) continue;
+          processed.add(spec.name);
+          const defaultFields: any = {};
+          if (spec.name === 'LCD_I2C' || spec.name === 'OLED_I2C') {
+            const boardComp = currentOption.components.find((c: string) => { const s = findSpec(c); return s && s.is_microcontroller; });
+            const isUno = boardComp && findSpec(boardComp)?.name === 'Arduino_Uno';
+            defaultFields['SDA_PIN'] = isUno ? 'A4' : 'GPIO21';
+            defaultFields['SCL_PIN'] = isUno ? 'A5' : 'GPIO22';
+            defaultFields['LINE_1'] = spec.name === 'LCD_I2C' ? 'Temp & Humid' : 'System OK';
+            defaultFields['LINE_2'] = spec.name === 'LCD_I2C' ? 'Monitoring...' : 'Active';
+          } else if (a.pin !== 'UNASSIGNED') {
+            defaultFields['PIN'] = a.pin;
+          }
+          list.push({ kind: 'block', type: `hardware_${spec.name}`, fields: defaultFields });
         }
-        list.push({ kind: 'block', type: `hardware_${spec.name}`, fields: defaultFields });
-      }
-
-      for (const spec of runtimeComps.filter(c => c.category === 'Actuators')) {
-        if (!processed.has(spec.name)) {
+      } else {
+        for (const spec of COMPONENTS.filter(c => c.category === 'Actuators')) {
           list.push({ kind: 'block', type: `hardware_${spec.name}` });
         }
       }
 
+      for (const spec of runtimeComps.filter(c => c.category === 'Actuators')) {
+        if (!processed.has(spec.name)) list.push({ kind: 'block', type: `hardware_${spec.name}` });
+      }
       list.push({ kind: 'button', text: '+ Generate Block…', callbackKey: 'GEN_BLOCK_Actuators' });
       return list;
     });
 
     workspace.registerToolboxCategoryCallback('CONTROL_DYNAMIC', () => {
-      const { customComponents: runtimeComps } = useCircuitStore.getState();
+      const { customComponents: runtimeComps, options: storeOpts, selectedOptionId: storeOptId, swapSimulation: storeSim } = useCircuitStore.getState();
+      const currentOption = storeSim.active && storeSim.simulatedOption
+        ? storeSim.simulatedOption
+        : storeOpts.find(o => o.id === storeOptId);
       const list: any[] = [];
-      const boardComponent = selectedOption.components.find((c: string) => {
-        const s = findSpec(c);
-        return s && s.is_microcontroller;
-      });
-      const hostBoardName = boardComponent ? findSpec(boardComponent)?.name : 'ESP32';
-      list.push({ kind: 'block', type: `hardware_${hostBoardName}` });
 
-      const otherControls = selectedOption.components.filter((c: string) => {
-        const s = findSpec(c);
-        return s && s.category === 'Control' && !s.is_microcontroller;
-      });
-      for (const c of otherControls) {
-        const spec = findSpec(c);
-        if (spec) list.push({ kind: 'block', type: `hardware_${spec.name}` });
+      if (currentOption) {
+        const boardComponent = currentOption.components.find((c: string) => { const s = findSpec(c); return s && s.is_microcontroller; });
+        const hostBoardName = boardComponent ? findSpec(boardComponent)?.name : 'ESP32';
+        list.push({ kind: 'block', type: `hardware_${hostBoardName}` });
+        for (const c of currentOption.components.filter((c: string) => { const s = findSpec(c); return s && s.category === 'Control' && !s.is_microcontroller; })) {
+          const spec = findSpec(c);
+          if (spec) list.push({ kind: 'block', type: `hardware_${spec.name}` });
+        }
+      } else {
+        for (const spec of COMPONENTS.filter(c => c.category === 'Control')) {
+          list.push({ kind: 'block', type: `hardware_${spec.name}` });
+        }
       }
 
       for (const spec of runtimeComps.filter(c => c.category === 'Control')) {
         list.push({ kind: 'block', type: `hardware_${spec.name}` });
       }
-
       list.push({ kind: 'button', text: '+ Generate Block…', callbackKey: 'GEN_BLOCK_Control' });
       return list;
     });
 
     workspace.registerToolboxCategoryCallback('POWER_DYNAMIC', () => {
-      const { customComponents: runtimeComps } = useCircuitStore.getState();
-      const list: any[] = runtimeComps
-        .filter(c => c.category === 'Power')
-        .map(spec => ({ kind: 'block', type: `hardware_${spec.name}` }));
+      const { customComponents: runtimeComps, options: storeOpts, selectedOptionId: storeOptId, swapSimulation: storeSim } = useCircuitStore.getState();
+      const currentOption = storeSim.active && storeSim.simulatedOption
+        ? storeSim.simulatedOption
+        : storeOpts.find(o => o.id === storeOptId);
+      const list: any[] = [];
+
+      if (!currentOption) {
+        for (const spec of COMPONENTS.filter(c => c.category === 'Power')) {
+          list.push({ kind: 'block', type: `hardware_${spec.name}` });
+        }
+      }
+
+      for (const spec of runtimeComps.filter(c => c.category === 'Power')) {
+        list.push({ kind: 'block', type: `hardware_${spec.name}` });
+      }
       list.push({ kind: 'button', text: '+ Generate Block…', callbackKey: 'GEN_BLOCK_Power' });
       return list;
     });
@@ -646,7 +691,7 @@ function BlocksCanvas() {
       });
     });
 
-    initializeWorkspaceBlocks(workspace, selectedOption);
+    if (selectedOption) initializeWorkspaceBlocks(workspace, selectedOption);
 
     // Initial code generation after scaffold — runs synchronously so
     // RightPanel's Monaco editor is populated before the user sees it.
@@ -717,39 +762,39 @@ function BlocksCanvas() {
     }
   }, []);
 
-  if (!selectedOption) {
-    return (
-      <div className="flex-1 dot-matrix w-full h-full relative flex flex-col items-center justify-center gap-3 text-center p-8">
-        <div className="flex flex-col gap-2 items-center text-on-surface-variant">
-          <div className="w-10 h-10 rounded-full border-2 border-dashed border-outline-variant flex items-center justify-center">
-            <PlusCircle size={20} className="opacity-40" />
-          </div>
-          <span className="font-mono text-[11px] uppercase tracking-wider opacity-60">
-            Select an architecture option in the Copilot to populate blocks
-          </span>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex-1 dot-matrix w-full h-full relative overflow-hidden">
-      <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 py-2 bg-surface/90 backdrop-blur border-b border-outline-variant/40">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-on-surface-variant">
-            Milestone 1 — Hardware setup
-          </span>
-          {approved && (
-            <div className="flex items-center gap-1 text-secondary">
-              <CheckCircle2 size={11} />
-              <span className="font-mono text-[9px] uppercase tracking-wider">Approved</span>
-            </div>
-          )}
+      {/* Header: pipeline info when option selected, dismissible tip otherwise */}
+      {selectedOption ? (
+        <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 py-2 bg-surface/90 backdrop-blur border-b border-outline-variant/40">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-on-surface-variant">
+              Milestone 1 — Hardware setup
+            </span>
+            {approved && (
+              <div className="flex items-center gap-1 text-secondary">
+                <CheckCircle2 size={11} />
+                <span className="font-mono text-[9px] uppercase tracking-wider">Approved</span>
+              </div>
+            )}
+          </div>
+          <ConfidenceBadge confidence={confidence} />
         </div>
-        <ConfidenceBadge confidence={confidence} />
-      </div>
+      ) : !hintDismissed ? (
+        <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 py-2 bg-secondary/8 border-b border-secondary/20 backdrop-blur">
+          <span className="font-mono text-[10px] text-secondary/80">
+            Tip: run the Copilot wizard to auto-fill blocks — or build freely here
+          </span>
+          <button
+            onClick={() => setHintDismissed(true)}
+            className="text-secondary/50 hover:text-secondary transition-colors ml-3 shrink-0"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      ) : null}
 
-      {approved && confidence === 'verify_manually' && validation?.violations && (
+      {selectedOption && approved && confidence === 'verify_manually' && validation?.violations && (
         <div className="absolute top-10 left-4 right-4 z-10 p-3 rounded-lg border border-tertiary/40 bg-tertiary/8 flex items-start gap-2 backdrop-blur">
           <ShieldAlert size={14} className="text-tertiary mt-0.5 shrink-0" />
           <div className="flex flex-col gap-0.5">
@@ -769,7 +814,7 @@ function BlocksCanvas() {
         onDrop={(e) => { e.preventDefault(); dropBlockFromEvent(e); }}
       />
 
-      {!approved && validation && <PendingReviewOverlay />}
+      {selectedOption && !approved && validation && <PendingReviewOverlay />}
 
       {/* On-demand block generator — appears when "Generate Block…" toolbox button is clicked */}
       {genPanel.open && (

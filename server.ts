@@ -81,10 +81,15 @@ function hasApiKey(provider: string): boolean {
 // ─── Zod runtime schemas (Section 5.1a) ──────────────────────────────────────
 // These mirror the TypeScript types and enforce them at runtime on every LLM response.
 
+const ZClarifyingQuestion = z.object({
+  question: z.string().min(1),
+  suggestedAnswers: z.array(z.string()).min(2).max(4),
+});
+
 const ZIntentObject = z.object({
   goal: z.string().min(1, 'goal must be a non-empty string'),
   components_mentioned: z.array(z.string()),
-  missing_info: z.array(z.string()),
+  missing_info: z.array(ZClarifyingQuestion),
   assumptions: z.array(z.string()),
 });
 
@@ -163,7 +168,17 @@ const intentSchema: Schema = {
   properties: {
     goal:                  { type: Type.STRING },
     components_mentioned:  { type: Type.ARRAY, items: { type: Type.STRING } },
-    missing_info:          { type: Type.ARRAY, items: { type: Type.STRING } },
+    missing_info: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          question:         { type: Type.STRING },
+          suggestedAnswers: { type: Type.ARRAY, items: { type: Type.STRING } },
+        },
+        required: ['question', 'suggestedAnswers'],
+      },
+    },
     assumptions:           { type: Type.ARRAY, items: { type: Type.STRING } },
   },
   required: ['goal', 'components_mentioned', 'missing_info', 'assumptions'],
@@ -227,13 +242,13 @@ Your job is to turn a plain-language hardware idea into a structured intent obje
 
 Rules:
 - Identify what information is missing or ambiguous (e.g. power source, connectivity, sensor type).
-- List each missing piece as a short, specific question in missing_info.
+- For each gap, add an entry to missing_info with a short "question" and 2–4 short "suggestedAnswers" a typical maker would pick.
 - For anything you're willing to assume, state the assumption clearly in assumptions (never leave it blank).
 - If the user's message is a FOLLOW-UP reply to a previous clarifying question, incorporate it into the goal and reduce missing_info accordingly.
 - Keep goal concise (one sentence), components_mentioned as exact part names where possible.
 
 Output ONLY valid JSON matching this shape:
-{ "goal": string, "components_mentioned": string[], "missing_info": string[], "assumptions": string[] }
+{ "goal": string, "components_mentioned": string[], "missing_info": [{ "question": string, "suggestedAnswers": string[] }], "assumptions": string[] }
 
 Do NOT add any commentary outside the JSON.`;
 
@@ -505,7 +520,7 @@ async function callClarify(
     ZIntentObject,
     () => rawClarifyCall(provider, userPrompt),
     (err) => rawClarifyCall(provider,
-      `${userPrompt}\n\n[CORRECTION NEEDED] Your previous response failed schema validation: ${err}. Please return valid JSON matching: { "goal": string, "components_mentioned": string[], "missing_info": string[], "assumptions": string[] }`
+      `${userPrompt}\n\n[CORRECTION NEEDED] Your previous response failed schema validation: ${err}. Please return valid JSON matching: { "goal": string, "components_mentioned": string[], "missing_info": [{ "question": string, "suggestedAnswers": string[] }], "assumptions": string[] }`
     ),
     'clarify',
   );

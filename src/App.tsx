@@ -97,9 +97,6 @@ export default function App() {
       // Option selected, no plan yet → show blocks canvas (with pending overlay) + code tab
       setCenterView('blocks');
       setActiveRightTab('code');
-    } else if (activeNav === 'logic') {
-      setCenterView('blocks');
-      setActiveRightTab('code');
     } else if (activeNav === 'assistant' && !selectedOptionId) {
       setCenterView('blocks');
     }

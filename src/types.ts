@@ -71,12 +71,18 @@ export type ClarifyStage =
 
 // ─── Data contracts (must match server-side schemas exactly) ──────────────────
 
+/** One clarifying question with clickable answer chips */
+export type ClarifyingQuestion = {
+  question: string;
+  suggestedAnswers: string[];
+};
+
 /** Output of the Clarify LLM call */
 export type IntentObject = {
   goal: string;
   components_mentioned: string[];
-  missing_info: string[];   // what the user did not specify
-  assumptions: string[];    // what the AI is assuming instead of asking
+  missing_info: ClarifyingQuestion[];
+  assumptions: string[];
 };
 
 /** One architecture proposal returned by the Compare LLM call */

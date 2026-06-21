@@ -1,12 +1,13 @@
 /**
  * HardwarePanel — draggable hardware component palette for the left sidebar.
  *
- * Each card can be:
- *   • Dragged onto the Blockly canvas  → block appears at the drop position
- *   • Clicked                          → block is placed near the visible viewport
+ * Each block uses the same puzzle-piece shape as statement blocks in the Logic
+ * panel (notch at top, tab at bottom) — hardware blocks always produce void
+ * statements, never values.
  *
- * All component data comes from the static COMPONENTS table + any AI-generated
- * customComponents in the Zustand store. Zero LLM calls happen here.
+ * Placement:
+ *   Drag onto canvas → block at drop position (via workspaceRef)
+ *   Click            → block near top-left of visible viewport
  */
 
 import type { ComponentSpec } from '../data/components';
@@ -14,6 +15,7 @@ import { COMPONENTS } from '../data/components';
 import { useCircuitStore } from '../store';
 import { addBlockNearViewport } from '../lib/workspaceRef';
 
+// ── Category styling ──────────────────────────────────────────────────────────
 const CATEGORY_COLOR: Record<string, string> = {
   Sensors:   '#b87333',
   Actuators: '#d4af37',
@@ -29,10 +31,29 @@ const PIN_BADGE: Record<string, string> = {
   interrupt: 'IRQ',
 };
 
+// ── Puzzle geometry (mirrors LogicPanel) ─────────────────────────────────────
+const NX = 12;
+const NW = 20;
+const NH = 8;
+const BH = 44;   // Hardware blocks are a bit taller to fit name + sub-info
+const TOTAL = NH + BH + NH;
+
+const STATEMENT_CLIP = [
+  `0% ${NH}px`,
+  `${NX}px ${NH}px`,  `${NX}px 0`,  `${NX + NW}px 0`,  `${NX + NW}px ${NH}px`,
+  `100% ${NH}px`,
+  `100% ${NH + BH}px`,
+  `${NX + NW}px ${NH + BH}px`,  `${NX + NW}px ${TOTAL}px`,  `${NX}px ${TOTAL}px`,  `${NX}px ${NH + BH}px`,
+  `0% ${NH + BH}px`,
+].join(', ');
+
+// ── Hardware block card ───────────────────────────────────────────────────────
 function HardwareBlockCard({ spec }: { spec: ComponentSpec }) {
   const blockType = `hardware_${spec.name}`;
   const color     = CATEGORY_COLOR[spec.category] ?? '#9da3a6';
-  const pinTypes  = spec.pin_types_required.slice(0, 2);
+  const pinTypes  = spec.pin_types_required.length > 0
+    ? spec.pin_types_required.slice(0, 2)
+    : ['power'];
 
   return (
     <div
@@ -43,66 +64,59 @@ function HardwareBlockCard({ spec }: { spec: ComponentSpec }) {
       }}
       onClick={() => addBlockNearViewport(blockType)}
       title={`${spec.notes}\nDrag to canvas or click to add`}
-      className="relative flex flex-col overflow-hidden rounded-lg border border-outline-variant bg-surface-container select-none cursor-grab active:cursor-grabbing hover:scale-[1.02] hover:shadow-lg hover:border-outline transition-all duration-150 group"
+      className="select-none cursor-grab active:cursor-grabbing hover:brightness-125 transition-all duration-100 group"
+      style={{ filter: `drop-shadow(0 0 1px ${color}) drop-shadow(0 2px 6px rgba(0,0,0,0.7))` }}
     >
-      {/* Left accent bar */}
+      {/* Puzzle-piece shaped dark block with colored glow outline */}
       <div
-        className="absolute left-0 top-0 bottom-0 w-[3px]"
-        style={{ backgroundColor: color }}
-      />
-
-      {/* Block body */}
-      <div className="pl-3 pr-2 py-2 flex items-start justify-between gap-2">
-        <div className="flex flex-col gap-0.5 min-w-0">
-          <span className="font-mono text-[12px] font-bold text-on-surface truncate">
-            {spec.name.replace(/_/g, ' ')}
-          </span>
-          <span className="font-mono text-[9px] text-on-surface-variant leading-snug">
-            {spec.voltage}V · {spec.current_ma}mA
-          </span>
-        </div>
-
-        <div className="flex flex-col items-end gap-0.5 shrink-0">
-          {pinTypes.map((pt) => (
-            <span
-              key={pt}
-              className="font-mono text-[9px] px-1.5 py-[1px] rounded border"
-              style={{
-                borderColor: `${color}60`,
-                color,
-                backgroundColor: `${color}15`,
-              }}
-            >
-              {PIN_BADGE[pt] ?? pt.toUpperCase()}
+        style={{
+          height: TOTAL,
+          backgroundColor: '#111215',
+          clipPath: `polygon(${STATEMENT_CLIP})`,
+        }}
+      >
+        <div
+          className="flex items-center justify-between"
+          style={{
+            paddingTop: NH,
+            paddingLeft: 10,
+            paddingRight: 8,
+            height: '100%',
+          }}
+        >
+          {/* Component info */}
+          <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+            <span className="font-mono text-[12px] font-bold truncate leading-none" style={{ color }}>
+              {spec.name.replace(/_/g, ' ')}
             </span>
-          ))}
-          {spec.pin_types_required.length === 0 && (
-            <span
-              className="font-mono text-[9px] px-1.5 py-[1px] rounded border"
-              style={{ borderColor: `${color}60`, color, backgroundColor: `${color}15` }}
-            >
-              PWR
+            <span className="font-mono text-[9px] leading-none" style={{ color: `${color}99` }}>
+              {spec.voltage}V · {spec.current_ma}mA
             </span>
-          )}
+          </div>
+
+          {/* Pin type badges */}
+          <div className="flex flex-col items-end gap-0.5 shrink-0 ml-2">
+            {pinTypes.map((pt) => (
+              <span
+                key={pt}
+                className="font-mono text-[8px] px-1 py-px rounded leading-none"
+                style={{
+                  border: `1px solid ${color}55`,
+                  color: `${color}cc`,
+                  backgroundColor: `${color}15`,
+                }}
+              >
+                {PIN_BADGE[pt] ?? pt.toUpperCase()}
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
-
-      {/* Bottom connector notch hint */}
-      <div
-        className="h-[2px] mx-3 mb-1 rounded-full opacity-30"
-        style={{ backgroundColor: color }}
-      />
-
-      {/* Hover overlay: "drag or click" hint */}
-      <div className="absolute inset-0 flex items-center justify-center bg-surface/85 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none rounded-lg">
-        <span className="font-mono text-[9px] font-bold text-on-surface px-2 py-1 bg-surface border border-outline-variant rounded shadow-sm">
-          drag or click to add
-        </span>
       </div>
     </div>
   );
 }
 
+// ── Main panel ────────────────────────────────────────────────────────────────
 const CATEGORY_ORDER = ['Sensors', 'Actuators', 'Control', 'Power'] as const;
 
 export default function HardwarePanel() {
@@ -114,32 +128,31 @@ export default function HardwarePanel() {
       {CATEGORY_ORDER.map((category) => {
         const specs = allSpecs.filter((s) => s.category === category);
         if (specs.length === 0) return null;
-        const color = CATEGORY_COLOR[category];
 
         return (
-          <div key={category} className="flex flex-col gap-1.5">
+          <div key={category} className="flex flex-col gap-2">
             {/* Category header */}
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+              <div
+                className="w-2 h-2 rounded-full"
+                style={{ backgroundColor: CATEGORY_COLOR[category] }}
+              />
               <span className="font-mono text-[10px] uppercase tracking-wider text-on-surface-variant">
                 {category}
               </span>
             </div>
 
             {/* Block cards */}
-            <div className="flex flex-col gap-1.5">
-              {specs.map((spec) => (
-                <HardwareBlockCard key={spec.name} spec={spec} />
-              ))}
-            </div>
+            {specs.map((spec) => (
+              <HardwareBlockCard key={spec.name} spec={spec} />
+            ))}
           </div>
         );
       })}
 
-      {/* Usage hint */}
       <div className="mt-1 px-2 py-2 rounded border border-dashed border-outline-variant/40">
         <p className="font-mono text-[9px] text-on-surface-variant/50 text-center leading-snug">
-          Drag any block onto the canvas<br />or click to place near viewport
+          Drag to canvas · click to place near viewport
         </p>
       </div>
     </div>

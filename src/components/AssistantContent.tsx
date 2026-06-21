@@ -43,20 +43,44 @@ function MessageBubble({ msg, children }: { msg: ChatMessage; children?: React.R
 
 // ─── ClarifyCard — shown when missing_info is non-empty ───────────────────────
 function ClarifyCard({ intent }: { intent: import('../types').IntentObject }) {
+  const handleChip = (answer: string) => {
+    window.dispatchEvent(new CustomEvent('QUICK_ANSWER', { detail: answer }));
+  };
+
   return (
     <div className="mt-3 flex flex-col gap-2 border-t border-outline-variant/40 pt-3">
       {intent.missing_info.length > 0 && (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
           <div className="flex items-center gap-1.5 text-tertiary mb-0.5">
             <HelpCircle size={13} />
             <span className="font-mono text-[10px] uppercase tracking-wider">Clarifying questions</span>
           </div>
-          {intent.missing_info.map((q, i) => (
-            <div key={i} className="flex gap-2 items-start p-2 rounded bg-tertiary/8 border border-tertiary/20 text-xs text-on-surface">
-              <span className="text-tertiary font-bold shrink-0 mt-0.5">{i + 1}.</span>
-              <span>{q}</span>
-            </div>
-          ))}
+          {intent.missing_info.map((q: any, i) => {
+            const questionStr = typeof q === 'string' ? q : q.question;
+            const suggestedAnswers = (typeof q === 'object' && Array.isArray(q.suggestedAnswers)) ? q.suggestedAnswers : [];
+            
+            return (
+              <div key={i} className="flex flex-col gap-1.5 p-2 rounded bg-tertiary/8 border border-tertiary/20">
+                <div className="flex gap-2 items-start text-xs text-on-surface">
+                  <span className="text-tertiary font-bold shrink-0 mt-0.5">{i + 1}.</span>
+                  <span>{questionStr}</span>
+                </div>
+                {suggestedAnswers.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pl-4">
+                    {suggestedAnswers.map((ans: string, j: number) => (
+                      <button
+                        key={j}
+                        onClick={() => handleChip(ans)}
+                        className="font-mono text-[10px] px-2 py-1 rounded border border-tertiary/40 bg-tertiary/10 text-tertiary hover:bg-tertiary/25 transition-colors cursor-pointer"
+                      >
+                        {ans}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
       {intent.assumptions.length > 0 && (

@@ -26,7 +26,7 @@ async function run() {
       text: "I want to use ESP32 and switch high-voltage loads using a relay.",
       context: [
         { role: "user", content: "I want to build a motion detector alarm" },
-        { role: "assistant", content: `Goal identified: ${clarify1.goal}. Missing: ${clarify1.missing_info.join('; ')}` }
+        { role: "assistant", content: `Goal identified: ${clarify1.goal}. Missing: ${clarify1.missing_info.map((q: any) => q.question).join('; ')}` }
       ]
     })
   });

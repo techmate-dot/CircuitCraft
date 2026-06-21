@@ -1,9 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Puzzle, Archive, Bot, Send, MoreHorizontal, RotateCcw, Shuffle, ArrowRight, GitCompare, AlertTriangle, AlertCircle, ChevronDown, Cpu } from 'lucide-react';
+import { Archive, Bot, Send, MoreHorizontal, RotateCcw, Shuffle, ArrowRight, GitCompare, AlertTriangle, AlertCircle, ChevronDown } from 'lucide-react';
 import type { NavTab } from '../types';
 import AssistantContent from './AssistantContent';
-import LogicPanel from './LogicPanel';
-import HardwarePanel from './HardwarePanel';
 import { useCircuitStore } from '../store';
 import { validateArchitecture, findSpec, COMPONENTS } from '../data/components';
 import localContext from '../data/localContext.json';
@@ -16,6 +14,7 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
   const [inputText, setInputText] = useState('');
   const [bomOpen, setBomOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const handleSubmitRef = useRef<((textOverride?: string) => void) | null>(null);
 
   const {
     addMessage,
@@ -130,21 +129,33 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
       }
     };
 
+    const handleQuickAnswer = (e: Event) => {
+      const answer = (e as CustomEvent<string>).detail;
+      if (!answer) return;
+      setInputText(prev => {
+        const combined = prev ? `${prev}, ${answer}` : answer;
+        setTimeout(() => handleSubmitRef.current?.(combined), 0);
+        return '';
+      });
+    };
+
     window.addEventListener('SELECT_OPTION', handleSelectOption);
     window.addEventListener('APPROVE_PLAN', handleApprovePlan);
+    window.addEventListener('QUICK_ANSWER', handleQuickAnswer);
     return () => {
       window.removeEventListener('SELECT_OPTION', handleSelectOption);
       window.removeEventListener('APPROVE_PLAN', handleApprovePlan);
+      window.removeEventListener('QUICK_ANSWER', handleQuickAnswer);
     };
   }, []);
 
   // ── Core submit handler — named pipeline state machine ────────────────────
-  const handleSubmit = async (e?: React.FormEvent) => {
+  const handleSubmit = async (e?: React.FormEvent, textOverride?: string) => {
     if (e) e.preventDefault();
-    const text = inputText.trim();
+    const text = (textOverride ?? inputText).trim();
     if (!text || isLoading) return;
 
-    setInputText('');
+    if (!textOverride) setInputText('');
     addMessage({ role: 'user', content: text });
 
     const currentStage = clarifyStage;
@@ -188,7 +199,7 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
       appendClarifyContext({ role: 'user', content: text });
       appendClarifyContext({
         role: 'assistant',
-        content: `Goal identified: ${newIntent.goal}. Missing: ${newIntent.missing_info.join('; ')}`,
+        content: `Goal identified: ${newIntent.goal}. Missing: ${newIntent.missing_info.map((q: any) => typeof q === 'string' ? q : q.question).join('; ')}`,
       });
 
       console.log(`[flow] intent — missing_info=${newIntent.missing_info.length} assumptions=${newIntent.assumptions.length}`);
@@ -271,6 +282,9 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
     }
   };
 
+  // Keep the ref current so the QUICK_ANSWER event listener always calls the latest closure
+  handleSubmitRef.current = (textOverride?: string) => handleSubmit(undefined, textOverride);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -303,46 +317,26 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
       {/* Panel header */}
       <div className="h-12 border-b border-outline-variant flex items-center px-panel-padding justify-between shrink-0">
         <div className="flex items-center gap-sm text-secondary">
-          {activeNav === 'logic' ? (
-            <>
-              <Puzzle size={18} />
-              <span className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase">Logic Blocks</span>
-            </>
-          ) : activeNav === 'hardware' ? (
-            <>
-              <Cpu size={18} />
-              <span className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase">Hardware</span>
-            </>
-          ) : (
-            <>
-              <Bot size={18} />
-              <span className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase">Copilot</span>
-            </>
-          )}
+          <Bot size={18} />
+          <span className="font-mono text-[11px] font-medium tracking-[0.05em] uppercase">Copilot</span>
         </div>
         <div className="flex items-center gap-1">
-          {activeNav === 'assistant' && (
-            <button
-              onClick={() => reset()}
-              title="New conversation"
-              className="text-on-surface-variant hover:text-on-surface p-1 rounded hover:bg-surface-container transition-colors"
-            >
-              <RotateCcw size={15} />
-            </button>
-          )}
+          <button
+            onClick={() => reset()}
+            title="New conversation"
+            className="text-on-surface-variant hover:text-on-surface p-1 rounded hover:bg-surface-container transition-colors"
+          >
+            <RotateCcw size={15} />
+          </button>
           <button className="text-on-surface-variant hover:text-on-surface p-1">
-            {(activeNav === 'logic' || activeNav === 'hardware') ? <Search size={18} /> : <MoreHorizontal size={18} />}
+            <MoreHorizontal size={18} />
           </button>
         </div>
       </div>
 
       {/* Scrollable content area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-panel-padding flex flex-col gap-lg">
-        {activeNav === 'logic'
-          ? <LogicPanel />
-          : activeNav === 'hardware'
-            ? <HardwarePanel />
-            : <AssistantContent />}
+        <AssistantContent />
       </div>
 
       {/* Input area (assistant tab only) */}
