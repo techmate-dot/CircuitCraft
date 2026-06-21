@@ -125,6 +125,34 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
           content: `Your milestone plan is ready — **${milestones.length} steps** are visible in the **Plan** view.\n\n→ Switch to the **Plan** tab, review all milestones, then click **Mark as Reviewed** to unlock the diagram and code panels.`,
           type: 'plan',
         });
+
+        // Fire risk analysis in parallel — non-blocking, best-effort
+        const { findSpec: _findSpec } = await import('../data/components');
+        const peripherals = option.components.filter((c: string) => {
+          const s = _findSpec(c);
+          return s && !s.is_microcontroller;
+        });
+        const board = option.components.find((c: string) => {
+          const s = _findSpec(c);
+          return s?.is_microcontroller;
+        }) ?? option.label;
+        fetch('/api/risk-analysis', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ components: peripherals, boardName: board }),
+        })
+          .then(r => r.ok ? r.json() : null)
+          .then(data => {
+            if (data?.risks?.length > 0) {
+              addMessage({
+                role: 'assistant',
+                content: `I also ran a **build risk scan** across your component combination and found ${data.risks.length} potential issue${data.risks.length !== 1 ? 's' : ''} to watch for:`,
+                type: 'risks',
+                data: { risks: data.risks },
+              });
+            }
+          })
+          .catch(() => { /* silent — risk analysis is non-critical */ });
       } catch (e: any) {
         console.error('[plan] error:', e);
         transitionTo('ERROR', { stage: 'plan', message: e.message, retryable: true });

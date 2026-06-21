@@ -23,8 +23,10 @@ export interface ChatMessage {
    *   validation   → ValidationCard — violations + approval gate
    *   plan         → plain text pointing to Plan canvas
    *   error        → ErrorCard — schema/API failure with optional retry
+   *   risks        → RiskCard — post-approval build risk analysis
    */
-  type?: 'text' | 'clarify' | 'options' | 'validation' | 'plan' | 'error';
+  type?: 'text' | 'clarify' | 'options' | 'validation' | 'plan' | 'error' | 'risks';
+  data?: any; // type-specific payload (e.g. risks[])
 }
 
 export interface SwapSimulation {

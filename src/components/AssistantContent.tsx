@@ -1,7 +1,7 @@
 import {
   Bot, HelpCircle, Lightbulb, CheckCircle2, AlertTriangle,
   AlertCircle, Zap, DollarSign, Layers, Battery, RefreshCw, ShieldX,
-  ClipboardCheck, MapPin,
+  ClipboardCheck, MapPin, TriangleAlert, ShieldAlert,
 } from 'lucide-react';
 import { useCircuitStore } from '../store';
 import ReactMarkdown from 'react-markdown';
@@ -380,6 +380,50 @@ function PlanReviewWidget() {
   );
 }
 
+// ─── Risk Analysis card — shown after architecture approval ──────────────────
+type Risk = { title: string; severity: 'low' | 'medium' | 'high'; description: string; mitigation: string };
+
+function RiskCard({ risks }: { risks: Risk[] }) {
+  const severityStyle: Record<string, string> = {
+    high:   'text-error bg-error/10 border-error/25',
+    medium: 'text-tertiary bg-tertiary/10 border-tertiary/25',
+    low:    'text-on-surface-variant bg-surface-container border-outline-variant/40',
+  };
+  const SeverityIcon = ({ s }: { s: string }) =>
+    s === 'high'   ? <AlertCircle size={12} className="shrink-0 mt-0.5" /> :
+    s === 'medium' ? <TriangleAlert size={12} className="shrink-0 mt-0.5" /> :
+                     <ShieldAlert size={12} className="shrink-0 mt-0.5" />;
+
+  if (!risks || risks.length === 0) return null;
+
+  return (
+    <div className="mt-3 flex flex-col gap-2 border-t border-outline-variant/40 pt-3">
+      <div className="flex items-center gap-1.5 text-tertiary mb-0.5">
+        <ShieldAlert size={13} />
+        <span className="font-mono text-[10px] uppercase tracking-wider">Build Risk Report · {risks.length} item{risks.length !== 1 ? 's' : ''}</span>
+      </div>
+      {risks.map((r, i) => (
+        <div key={i} className={`flex flex-col gap-1 p-2.5 rounded border text-xs ${severityStyle[r.severity] ?? severityStyle.low}`}>
+          <div className="flex items-start gap-1.5">
+            <SeverityIcon s={r.severity} />
+            <div className="flex-1 flex flex-col gap-0.5">
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold">{r.title}</span>
+                <span className={`font-mono text-[8px] uppercase tracking-wider px-1 py-0.5 rounded border border-current/30 bg-current/5`}>{r.severity}</span>
+              </div>
+              <span className="text-on-surface-variant leading-snug">{r.description}</span>
+            </div>
+          </div>
+          <div className="flex items-start gap-1.5 mt-0.5 pl-4 text-[10px] opacity-80">
+            <span className="text-secondary shrink-0">→</span>
+            <span className="leading-snug">{r.mitigation}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Error card — shown when schema validation fails after retry ───────────────
 function ErrorCard({ message }: { message: string }) {
   const { transitionTo, reset } = useCircuitStore();
@@ -432,6 +476,7 @@ export default function AssistantContent({
         const isValidationMsg = msg.type === 'validation';
         const isErrorMsg = msg.type === 'error';
         const isPlanMsg = msg.type === 'plan';
+        const isRisksMsg = msg.type === 'risks';
 
         return (
           <MessageBubble key={i} msg={msg}>
@@ -473,6 +518,9 @@ export default function AssistantContent({
 
             {/* Plan review widget */}
             {isPlanMsg && <PlanReviewWidget />}
+
+            {/* Risk analysis card — post-approval */}
+            {isRisksMsg && <RiskCard risks={msg.data?.risks ?? []} />}
 
             {/* Error card — schema validation failed */}
             {isErrorMsg && <ErrorCard message={msg.content} />}

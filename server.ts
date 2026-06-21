@@ -26,8 +26,8 @@ import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 
 // ─── Provider instances (lazy — only the selected provider is actually called) ─
-const geminiClient = () =>
-  new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY ?? '' });
+const geminiClient = (apiKey?: string) =>
+  new GoogleGenAI({ apiKey: apiKey ?? process.env.GEMINI_API_KEY ?? '' });
 
 const openaiClient = () =>
   new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? '' });
@@ -35,9 +35,19 @@ const openaiClient = () =>
 const anthropicClient = () =>
   new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' });
 
-// ─── Gemini model fallback chain ─────────────────────────────────────────────
+// ─── Gemini model + key fallback chain ───────────────────────────────────────
+// Models: primary → fallback (tried in order for each key slot)
+// Keys:   GEMINI_API_KEY → GEMINI_API_KEY_2 (second key tried before switching model)
+// Quota strategy: 429 exhausts the current key → try next key → then next model
 const GEMINI_PRIMARY = 'gemini-3.5-flash';
 const GEMINI_FALLBACK = 'gemini-3.1-flash-lite';
+
+function geminiKeys(): string[] {
+  return [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY_2,
+  ].filter(Boolean) as string[];
+}
 
 function isOverloadError(e: any): boolean {
   const status = e?.status ?? e?.statusCode ?? e?.response?.status;
@@ -45,29 +55,57 @@ function isOverloadError(e: any): boolean {
   return status === 503 || msg.includes('503') || msg.includes('overloaded') || msg.includes('unavailable');
 }
 
+function isQuotaError(e: any): boolean {
+  const status = e?.status ?? e?.statusCode ?? e?.response?.status;
+  const msg: string = (e?.message ?? '').toLowerCase();
+  return status === 429 || msg.includes('429') || msg.includes('quota') || msg.includes('resource_exhausted') || msg.includes('rate_limit');
+}
+
 async function geminiWithFallback(params: { contents: string; config: object }): Promise<string> {
-  const ai = geminiClient();
+  const keys = geminiKeys();
+  if (keys.length === 0) throw new Error('No Gemini API key configured. Add GEMINI_API_KEY to your .env file.');
+
   const MAX_RETRIES = 2;
   const BACKOFF_MS = 1500;
+  let lastError: any;
 
+  // Outer: try each model in order
   for (const model of [GEMINI_PRIMARY, GEMINI_FALLBACK]) {
-    let lastError: any;
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      try {
-        const result = await ai.models.generateContent({ model, ...params });
-        if (model !== GEMINI_PRIMARY) console.warn(`[gemini] ⚠️  Using fallback model ${model} — primary returned 503`);
-        return result.text ?? '{}';
-      } catch (e: any) {
-        lastError = e;
-        if (isOverloadError(e) && attempt < MAX_RETRIES - 1) {
-          console.warn(`[gemini] 503 on model=${model} attempt=${attempt + 1}, retrying in ${BACKOFF_MS}ms…`);
-          await new Promise(r => setTimeout(r, BACKOFF_MS * (attempt + 1)));
-        } else {
-          break;
+    // Inner: try each key before moving to the next model
+    for (const [ki, apiKey] of keys.entries()) {
+      const ai = geminiClient(apiKey);
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        try {
+          const result = await ai.models.generateContent({ model, ...params });
+          if (model !== GEMINI_PRIMARY) console.warn(`[gemini] ⚠️  Fell back to model ${model}`);
+          if (ki > 0) console.warn(`[gemini] ⚠️  Using backup API key #${ki + 1}`);
+          return result.text ?? '{}';
+        } catch (e: any) {
+          lastError = e;
+          if (isQuotaError(e)) {
+            // Daily quota on this key — move to the next key immediately, no retries
+            console.warn(`[gemini] 429 quota on model=${model} key#${ki + 1} — trying next key`);
+            break;
+          }
+          if (isOverloadError(e) && attempt < MAX_RETRIES - 1) {
+            console.warn(`[gemini] 503 on model=${model} key#${ki + 1} attempt=${attempt + 1}, retrying in ${BACKOFF_MS}ms…`);
+            await new Promise(r => setTimeout(r, BACKOFF_MS * (attempt + 1)));
+          } else {
+            break;
+          }
         }
       }
+      // Non-quota/overload error → surface immediately, no further tries
+      if (lastError && !isQuotaError(lastError) && !isOverloadError(lastError)) throw lastError;
     }
-    if (!isOverloadError(lastError)) throw lastError;
+  }
+
+  if (isQuotaError(lastError)) {
+    const n = keys.length;
+    throw new Error(
+      `QUOTA_EXCEEDED: All ${n} Gemini API key${n > 1 ? 's' : ''} have hit their daily quota. ` +
+      `Add another key as GEMINI_API_KEY_2 in .env, or switch to OpenAI / Anthropic in the provider menu.`
+    );
   }
   throw new Error('All Gemini models returned 503 — service unavailable');
 }
@@ -75,7 +113,7 @@ async function geminiWithFallback(params: { contents: string; config: object }):
 function hasApiKey(provider: string): boolean {
   if (provider === 'openai') return !!process.env.OPENAI_API_KEY;
   if (provider === 'anthropic') return !!process.env.ANTHROPIC_API_KEY;
-  return !!process.env.GEMINI_API_KEY;
+  return geminiKeys().length > 0;
 }
 
 // ─── Zod runtime schemas (Section 5.1a) ──────────────────────────────────────
@@ -286,6 +324,11 @@ async function withSchemaValidation<T>(
   try {
     rawText = await rawCall();
   } catch (e: any) {
+    const msg: string = e.message ?? '';
+    // Quota errors won't recover from retry — surface them clearly, don't retry
+    if (msg.startsWith('QUOTA_EXCEEDED:') || isQuotaError(e)) {
+      return { __schema_error: true, message: msg.replace('QUOTA_EXCEEDED: ', '') };
+    }
     return { __schema_error: true, message: `${label} API call failed: ${e.message}` };
   }
 
@@ -695,6 +738,73 @@ async function startServer() {
     }
   });
 
+  // ── POST /api/explain-violation ─────────────────────────────────────────
+  // Called when the user reassigns a component to a potentially problematic pin.
+  // Returns a plain-English explanation + concrete fix suggestion.
+  app.post('/api/explain-violation', async (req, res) => {
+    const { component, pin, reservedReason, board, pinType } = req.body as {
+      component: string;
+      pin: string;
+      reservedReason?: string;
+      board: string;
+      pinType?: string;
+    };
+
+    const prompt = `You are a hardware validation assistant for Arduino/ESP32 maker projects.
+A user just assigned a component to a pin that may cause problems. Explain the issue in 1-2 short, friendly sentences aimed at a maker/hobbyist. Then give one concrete alternative.
+
+Component: ${component}
+Assigned pin: ${pin} on ${board}${reservedReason ? `\nPin restriction: ${reservedReason}` : ''}${pinType ? `\nExpected pin type: ${pinType}` : ''}
+
+Output ONLY valid JSON: { "explanation": string, "suggestion": string }`;
+
+    try {
+      const text = await geminiWithFallback({
+        contents: prompt,
+        config: { responseMimeType: 'application/json' },
+      });
+      const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? text);
+      res.json({
+        explanation: parsed.explanation ?? (reservedReason ?? 'This pin may cause problems.'),
+        suggestion: parsed.suggestion ?? 'Choose a different, unreserved pin.',
+      });
+    } catch {
+      // Graceful degradation — fall back to the spec reason without calling AI
+      res.json({
+        explanation: reservedReason ?? `${pin} is not suitable for ${component}.`,
+        suggestion: 'Choose a different pin from the dropdown.',
+      });
+    }
+  });
+
+  // ── POST /api/risk-analysis ──────────────────────────────────────────────
+  // Called after architecture approval. Returns 3-4 non-obvious build risks
+  // that DRC doesn't catch (interference, power-rail noise, assembly pitfalls).
+  app.post('/api/risk-analysis', async (req, res) => {
+    const { components, boardName } = req.body as { components: string[]; boardName: string };
+
+    const prompt = `You are a hardware engineering safety advisor for maker/hobbyist projects.
+Given these components, identify 3-4 PRACTICAL, NON-OBVIOUS risks a beginner might encounter building this project.
+Focus on: real hardware incompatibilities, power-rail noise, interference between components, common wiring mistakes, library conflicts, timing issues.
+Do NOT restate DRC violations (reserved pins, voltage mismatch) — those are already shown.
+
+Board: ${boardName}
+Components: ${components.join(', ')}
+
+Output ONLY valid JSON: { "risks": [{ "title": string, "severity": "low"|"medium"|"high", "description": string, "mitigation": string }] }`;
+
+    try {
+      const text = await geminiWithFallback({
+        contents: prompt,
+        config: { responseMimeType: 'application/json' },
+      });
+      const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? text);
+      res.json({ risks: Array.isArray(parsed.risks) ? parsed.risks : [] });
+    } catch {
+      res.json({ risks: [] });
+    }
+  });
+
   // ── Vite dev middleware or static production ──────────────────────────────
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -711,12 +821,16 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
+    const gKeys = geminiKeys();
     console.log(`\n✓ CircuitCraft server running at http://localhost:${PORT}`);
-    console.log(`  Default AI provider: ${process.env.AI_PROVIDER ?? 'gemini'}`);
-    console.log(`  Gemini key set:    ${!!process.env.GEMINI_API_KEY}`);
-    console.log(`  OpenAI key set:    ${!!process.env.OPENAI_API_KEY}`);
-    console.log(`  Anthropic key set: ${!!process.env.ANTHROPIC_API_KEY}\n`);
-    console.log(`  Schema validation: Zod (retry-then-error on all 3 LLM call sites)\n`);
+    console.log(`  Default AI provider : ${process.env.AI_PROVIDER ?? 'gemini'}`);
+    console.log(`  Gemini primary model: ${GEMINI_PRIMARY}`);
+    console.log(`  Gemini fallback model: ${GEMINI_FALLBACK}`);
+    console.log(`  Gemini key #1 set  : ${!!process.env.GEMINI_API_KEY}`);
+    console.log(`  Gemini key #2 set  : ${!!process.env.GEMINI_API_KEY_2}${!process.env.GEMINI_API_KEY_2 ? '  ← add GEMINI_API_KEY_2 to .env for quota resilience' : ''}`);
+    console.log(`  OpenAI key set     : ${!!process.env.OPENAI_API_KEY}`);
+    console.log(`  Anthropic key set  : ${!!process.env.ANTHROPIC_API_KEY}`);
+    console.log(`  Schema validation  : Zod (retry-then-error on all LLM call sites)\n`);
   });
 }
 
