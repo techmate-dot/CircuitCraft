@@ -196,214 +196,121 @@ const registerCustomBlocks = () => {
     };
   };
 
-  Blockly.Blocks['hardware_ESP32'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("ESP32 Controller");
-      this.setNextStatement(true, null);
-      this.setColour("#9da3a6");
-      this.setTooltip("ESP32 microcontroller with Wi-Fi & Bluetooth");
-    }
-  };
+  // Generate block definitions from ComponentSpecs deterministically
+  const blockDefinitions = COMPONENTS.map(spec => {
+    const isController = spec.is_microcontroller;
+    const colourMap: Record<string, string> = {
+      'Sensors': '#b87333',
+      'Actuators': '#d4af37',
+      'Control': '#9da3a6',
+      'Power': '#cc6633'
+    };
 
-  Blockly.Blocks['hardware_Arduino_Uno'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("Arduino Uno Controller");
-      this.setNextStatement(true, null);
-      this.setColour("#9da3a6");
-      this.setTooltip("ATmega328P based microcontroller board");
-    }
-  };
+    const blockJson: any = {
+      type: `hardware_${spec.name}`,
+      colour: colourMap[spec.category] || '#9da3a6',
+      tooltip: spec.notes || spec.name,
+    };
 
-  Blockly.Blocks['hardware_LED'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("LED Pin")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('LED')), "PIN")
-          .appendField("State")
-          .appendField(new (Blockly as any).FieldDropdown([["HIGH", "HIGH"], ["LOW", "LOW"]]), "STATE");
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour("#d4af37");
-      this.setTooltip("Basic Light Emitting Diode");
+    if (isController) {
+      blockJson.message0 = `${spec.name.replace('_', ' ')} Controller`;
+      blockJson.nextStatement = null;
+    } else if (spec.name === 'HC-SR04') {
+      blockJson.message0 = "HC-SR04 Trig %1 Echo %2";
+      blockJson.args0 = [
+        { type: "field_dropdown", name: "TRIG_PIN", options: getPinOptions('HC-SR04') },
+        { type: "field_dropdown", name: "ECHO_PIN", options: getPinOptions('HC-SR04') }
+      ];
+      blockJson.previousStatement = null;
+      blockJson.nextStatement = null;
+    } else if (spec.name === 'PIR_Sensor') {
+      blockJson.message0 = "PIR Sensor Pin %1";
+      blockJson.args0 = [{ type: "field_dropdown", name: "PIN", options: getPinOptions('PIR_Sensor') }];
+      blockJson.message1 = "do %1";
+      blockJson.args1 = [{ type: "input_statement", name: "DO" }];
+      blockJson.previousStatement = null;
+      blockJson.nextStatement = null;
+    } else if (spec.name === 'SG90_Servo') {
+      blockJson.message0 = "Servo Pin %1 Angle %2";
+      blockJson.args0 = [
+        { type: "field_dropdown", name: "PIN", options: getPinOptions('SG90_Servo') },
+        { type: "field_dropdown", name: "ANGLE", options: [["0°", "0"], ["45°", "45"], ["90°", "90"], ["135°", "135"], ["180°", "180"]] }
+      ];
+      blockJson.previousStatement = null;
+      blockJson.nextStatement = null;
+    } else if (spec.name === 'Buzzer') {
+      blockJson.message0 = "Buzzer Pin %1 Duration %2";
+      blockJson.args0 = [
+        { type: "field_dropdown", name: "PIN", options: getPinOptions('Buzzer') },
+        { type: "field_dropdown", name: "DURATION", options: [["100ms", "100"], ["200ms", "200"], ["500ms", "500"], ["1000ms", "1000"]] }
+      ];
+      blockJson.previousStatement = null;
+      blockJson.nextStatement = null;
+    } else if (spec.name === 'DC_Motor') {
+      blockJson.message0 = "DC Motor Pin %1 Speed %2";
+      blockJson.args0 = [
+        { type: "field_dropdown", name: "PIN", options: getPinOptions('DC_Motor') },
+        { type: "field_dropdown", name: "SPEED", options: [["OFF", "0"], ["HALF", "128"], ["FULL", "255"]] }
+      ];
+      blockJson.previousStatement = null;
+      blockJson.nextStatement = null;
+    } else if (spec.name === 'Motor_Driver') {
+      blockJson.message0 = "Motor Driver";
+      blockJson.previousStatement = null;
+      blockJson.nextStatement = null;
+    } else if (spec.name === 'DHT11') {
+      blockJson.message0 = "DHT11 Pin %1 Read %2";
+      blockJson.args0 = [
+        { type: "field_dropdown", name: "PIN", options: getPinOptions('DHT11') },
+        { type: "field_dropdown", name: "TYPE", options: [["Temperature", "temp"], ["Humidity", "humid"]] }
+      ];
+      blockJson.previousStatement = null;
+      blockJson.nextStatement = null;
+    } else if (spec.name === 'LCD_I2C') {
+      blockJson.message0 = "LCD I2C SDA %1 SCL %2";
+      blockJson.args0 = [
+        { type: "field_dropdown", name: "SDA_PIN", options: getPinOptions('LCD_I2C') },
+        { type: "field_dropdown", name: "SCL_PIN", options: getPinOptions('LCD_I2C') }
+      ];
+      blockJson.message1 = "Line 1 %1";
+      blockJson.args1 = [{ type: "field_input", name: "LINE_1", text: "Hello" }];
+      blockJson.message2 = "Line 2 %1";
+      blockJson.args2 = [{ type: "field_input", name: "LINE_2", text: "World" }];
+      blockJson.previousStatement = null;
+      blockJson.nextStatement = null;
+    } else if (spec.name === 'OLED_I2C') {
+      blockJson.message0 = "OLED I2C SDA %1 SCL %2";
+      blockJson.args0 = [
+        { type: "field_dropdown", name: "SDA_PIN", options: getPinOptions('OLED_I2C') },
+        { type: "field_dropdown", name: "SCL_PIN", options: getPinOptions('OLED_I2C') }
+      ];
+      blockJson.message1 = "Line 1 %1";
+      blockJson.args1 = [{ type: "field_input", name: "LINE_1", text: "System OK" }];
+      blockJson.message2 = "Line 2 %1";
+      blockJson.args2 = [{ type: "field_input", name: "LINE_2", text: "Active" }];
+      blockJson.previousStatement = null;
+      blockJson.nextStatement = null;
+    } else if (spec.name === 'Photoresistor') {
+      blockJson.message0 = "Photoresistor Pin %1";
+      blockJson.args0 = [{ type: "field_dropdown", name: "PIN", options: getPinOptions('Photoresistor') }];
+      blockJson.previousStatement = null;
+      blockJson.nextStatement = null;
+    } else {
+      // Default fallback for LED, Relay_Coil, Relay_Module, etc.
+      const label = spec.name.replace('_', ' ');
+      blockJson.message0 = `${label} Pin %1 State %2`;
+      blockJson.args0 = [
+        { type: "field_dropdown", name: "PIN", options: getPinOptions(spec.name) },
+        { type: "field_dropdown", name: "STATE", options: [["HIGH", "HIGH"], ["LOW", "LOW"]] }
+      ];
+      blockJson.previousStatement = null;
+      blockJson.nextStatement = null;
     }
-  };
 
-  Blockly.Blocks['hardware_PIR_Sensor'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("PIR Sensor Pin")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('PIR_Sensor')), "PIN");
-      this.appendStatementInput("DO")
-          .appendField("do");
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour("#b87333");
-      this.setTooltip("Passive Infrared motion sensor");
-    }
-  };
+    return blockJson;
+  });
 
-  Blockly.Blocks['hardware_HC-SR04'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("HC-SR04 Trig")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('HC-SR04')), "TRIG_PIN")
-          .appendField("Echo")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('HC-SR04')), "ECHO_PIN");
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour("#b87333");
-      this.setTooltip("Ultrasonic distance sensor");
-    }
-  };
-
-  Blockly.Blocks['hardware_SG90_Servo'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("Servo Pin")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('SG90_Servo')), "PIN")
-          .appendField("Angle")
-          .appendField(new (Blockly as any).FieldDropdown([["0°", "0"], ["45°", "45"], ["90°", "90"], ["135°", "135"], ["180°", "180"]]), "ANGLE");
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour("#d4af37");
-      this.setTooltip("Micro servo motor");
-    }
-  };
-
-  Blockly.Blocks['hardware_Buzzer'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("Buzzer Pin")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('Buzzer')), "PIN")
-          .appendField("Duration")
-          .appendField(new (Blockly as any).FieldDropdown([["100ms", "100"], ["200ms", "200"], ["500ms", "500"], ["1000ms", "1000"]]), "DURATION");
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour("#d4af37");
-      this.setTooltip("Piezo buzzer");
-    }
-  };
-
-  Blockly.Blocks['hardware_Relay_Coil'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("Relay Coil Pin")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('Relay_Coil')), "PIN")
-          .appendField("State")
-          .appendField(new (Blockly as any).FieldDropdown([["HIGH", "HIGH"], ["LOW", "LOW"]]), "STATE");
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour("#d4af37");
-      this.setTooltip("Raw electromechanical relay coil");
-    }
-  };
-
-  Blockly.Blocks['hardware_Relay_Module'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("Relay Module Pin")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('Relay_Module')), "PIN")
-          .appendField("State")
-          .appendField(new (Blockly as any).FieldDropdown([["HIGH", "HIGH"], ["LOW", "LOW"]]), "STATE");
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour("#d4af37");
-      this.setTooltip("Relay module with integrated driver");
-    }
-  };
-
-  Blockly.Blocks['hardware_DC_Motor'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("DC Motor Pin")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('DC_Motor')), "PIN")
-          .appendField("Speed")
-          .appendField(new (Blockly as any).FieldDropdown([["OFF", "0"], ["HALF", "128"], ["FULL", "255"]]), "SPEED");
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour("#d4af37");
-      this.setTooltip("Direct Current motor");
-    }
-  };
-
-  Blockly.Blocks['hardware_Motor_Driver'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("Motor Driver");
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour("#9da3a6");
-      this.setTooltip("Motor driver (e.g. ULN2003 or L298N)");
-    }
-  };
-
-  Blockly.Blocks['hardware_DHT11'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("DHT11 Pin")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('DHT11')), "PIN")
-          .appendField("Read")
-          .appendField(new (Blockly as any).FieldDropdown([["Temperature", "temp"], ["Humidity", "humid"]]), "TYPE");
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour("#b87333");
-      this.setTooltip("DHT11 Temperature & Humidity Sensor");
-    }
-  };
-
-  Blockly.Blocks['hardware_Photoresistor'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("Photoresistor Pin")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('Photoresistor')), "PIN");
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour("#b87333");
-      this.setTooltip("Light dependent resistor");
-    }
-  };
-
-  Blockly.Blocks['hardware_LCD_I2C'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("LCD I2C SDA")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('LCD_I2C')), "SDA_PIN")
-          .appendField("SCL")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('LCD_I2C')), "SCL_PIN");
-      this.appendDummyInput()
-          .appendField("Line 1")
-          .appendField(new (Blockly as any).FieldTextInput("Hello"), "LINE_1");
-      this.appendDummyInput()
-          .appendField("Line 2")
-          .appendField(new (Blockly as any).FieldTextInput("World"), "LINE_2");
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour("#d4af37");
-      this.setTooltip("16x2 character LCD with I2C interface");
-    }
-  };
-
-  Blockly.Blocks['hardware_OLED_I2C'] = {
-    init: function(this: any) {
-      this.appendDummyInput()
-          .appendField("OLED I2C SDA")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('OLED_I2C')), "SDA_PIN")
-          .appendField("SCL")
-          .appendField(new (Blockly as any).FieldDropdown(getPinOptions('OLED_I2C')), "SCL_PIN");
-      this.appendDummyInput()
-          .appendField("Line 1")
-          .appendField(new (Blockly as any).FieldTextInput("System OK"), "LINE_1");
-      this.appendDummyInput()
-          .appendField("Line 2")
-          .appendField(new (Blockly as any).FieldTextInput("Active"), "LINE_2");
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour("#d4af37");
-      this.setTooltip("128x64 SSD1306 OLED display with I2C interface");
-    }
-  };
+  Blockly.common.defineBlocksWithJsonArray(blockDefinitions);
 };
 
 

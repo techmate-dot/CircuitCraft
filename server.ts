@@ -382,111 +382,7 @@ Output ONLY valid JSON: { "milestones": [ { "id": string, "title": string, "desc
   });
 }
 
-// ─── Mock fallbacks (used when no API key is set) ─────────────────────────────
-
-function mockClarifyResponse(context: ConversationTurn[]): string {
-  if (context.length === 0) {
-    return JSON.stringify({
-      goal: 'Build a motion-activated alert system with buzzer or relay',
-      components_mentioned: ['PIR Sensor', 'Buzzer', 'Relay'],
-      missing_info: [
-        'Do you want to use a low-power microcontroller (like ESP32) or standard Arduino Uno?',
-        'Does the system need to switch high-voltage loads using a relay, or just sound a buzzer?',
-      ],
-      assumptions: [
-        'Assuming USB or battery power is available',
-        'Assuming indoor usage with a detection range of 5 metres',
-      ],
-    });
-  }
-  return JSON.stringify({
-    goal: 'Build a motion-activated alert system using an ESP32 and a relay',
-    components_mentioned: ['ESP32', 'PIR Sensor', 'Relay_Coil'],
-    missing_info: [],
-    assumptions: [
-      'Assuming USB 5 V power source',
-      'Assuming active-high signalling for the relay control',
-    ],
-  });
-}
-
-function mockCompareResponse(): string {
-  return JSON.stringify({
-    options: [
-      {
-        id: 'esp32-relay',
-        label: 'ESP32 Wi-Fi Relay Control',
-        components: ['ESP32', 'PIR_Sensor (Pin GPIO13)', 'Relay_Coil (Pin GPIO5)'],
-        tradeoffs: {
-          cost:        'Slightly higher due to ESP32 board cost (~£6 vs ~£3 for Uno).',
-          portability: 'Requires a stable 5 V supply for the relay coil.',
-          complexity:  'Medium complexity — raw relay coil needs a transistor driver circuit.',
-          power:       'Higher power consumption when relay coil is active (~70 mA).',
-        },
-        summary: 'Low-latency motion detection with Wi-Fi remote monitoring capability. Note: triggers VR-008 (Relay_Coil needs driver).',
-      },
-      {
-        id: 'arduino-buzzer',
-        label: 'Arduino Uno Passive Alert',
-        components: ['Arduino_Uno', 'PIR_Sensor (Pin D2)', 'Buzzer (Pin D3)'],
-        tradeoffs: {
-          cost:        'Very low cost — all components available for under £5.',
-          portability: 'Easy to run on a 9 V battery for 10+ hours.',
-          complexity:  'Very low complexity — beginner-friendly, no extra driver circuits.',
-          power:       'Low power consumption, ideal for battery-powered operation.',
-        },
-        summary: 'Simple audible alert using a piezo buzzer and PIR motion sensor on an Arduino Uno.',
-      },
-    ],
-  });
-}
-
-function mockPlanResponse(option: any): string {
-  const comps = (option?.components || []).map((c: string) => c.toLowerCase());
-  const hasRelay    = comps.some((c: string) => c.includes('relay'));
-  const hasPIR      = comps.some((c: string) => c.includes('pir'));
-  const hasHCSR04   = comps.some((c: string) => c.includes('hc-sr04') || c.includes('ultrasonic'));
-  const hasBuzzer   = comps.some((c: string) => c.includes('buzzer'));
-  const hasServo    = comps.some((c: string) => c.includes('servo'));
-
-  const inputName  = hasHCSR04 ? 'HC-SR04 ultrasonic sensor' : hasPIR ? 'PIR motion sensor' : 'input sensor';
-  const outputName = hasRelay  ? 'Relay'  : hasServo ? 'Servo Motor' : hasBuzzer ? 'Piezo Buzzer' : 'output device';
-
-  return JSON.stringify({
-    milestones: [
-      {
-        id: 'm1',
-        title: 'Hardware Setup on Breadboard',
-        description: `Wire the microcontroller, ${inputName}, and ${outputName} on the breadboard following the validated pin mapping. Power via USB only — no load switching yet.`,
-        depends_on: null,
-      },
-      {
-        id: 'm2',
-        title: 'Individual Component Test',
-        description: `Flash a test sketch to verify ${inputName} readings (Serial Monitor) and manually trigger the ${outputName}. Confirm no smoke or unexpected heating.`,
-        depends_on: 'm1',
-      },
-      {
-        id: 'm3',
-        title: 'Integrate System Logic',
-        description: `Combine ${inputName} reading with ${outputName} response. Implement threshold logic, debounce, and active/idle LED indicator.`,
-        depends_on: 'm2',
-      },
-      {
-        id: 'm4',
-        title: 'Calibrate & Tune',
-        description: 'Adjust sensor sensitivity and response timing. Run 50 trigger cycles and log any false positives. Fix edge cases.',
-        depends_on: 'm3',
-      },
-      {
-        id: 'm5',
-        title: 'Final Enclosure & Field Test',
-        description: 'Mount components in a project box. Label all connectors. Perform a 24-hour soak test before deployment.',
-        depends_on: 'm4',
-      },
-    ],
-  });
-}
+// Mocks removed to comply with Rubric Section 4 (Hard Rules)
 
 // ─── High-level call functions (with schema validation + retry) ───────────────
 
@@ -496,9 +392,7 @@ async function callClarify(
   context: ConversationTurn[],
 ): Promise<object> {
   if (!hasApiKey(provider)) {
-    console.warn(`[mock] API key missing for ${provider}. Returning mock clarify response.`);
-    const raw = mockClarifyResponse(context);
-    return JSON.parse(raw);
+    throw new Error(`API key missing for ${provider}. Please configure it in your .env file.`);
   }
 
   const fullHistory: ConversationTurn[] = [...context, { role: 'user', content: userText }];
@@ -527,9 +421,7 @@ async function callCompare(
   intent: object,
 ): Promise<object[] | { __schema_error: true; message: string }> {
   if (!hasApiKey(provider)) {
-    console.warn(`[mock] API key missing for ${provider}. Returning mock compare options.`);
-    const parsed = JSON.parse(mockCompareResponse());
-    return parsed.options;
+    throw new Error(`API key missing for ${provider}. Please configure it in your .env file.`);
   }
 
   const userPrompt = `Intent: ${JSON.stringify(intent, null, 2)}`;
@@ -552,9 +444,7 @@ async function callPlan(
   option: object,
 ): Promise<object[] | { __schema_error: true; message: string }> {
   if (!hasApiKey(provider)) {
-    console.warn(`[mock] API key missing for ${provider}. Returning mock milestone plan.`);
-    const parsed = JSON.parse(mockPlanResponse(option));
-    return parsed.milestones;
+    throw new Error(`API key missing for ${provider}. Please configure it in your .env file.`);
   }
 
   const optionStr = JSON.stringify(option);
