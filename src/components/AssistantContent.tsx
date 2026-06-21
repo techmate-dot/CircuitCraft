@@ -22,11 +22,10 @@ function MessageBubble({ msg, children }: { msg: ChatMessage; children?: React.R
         </div>
       )}
       <div
-        className={`p-3 rounded-lg border text-sm max-w-[92%] ${
-          isUser
-            ? 'bg-secondary/10 border-secondary/25 text-on-surface'
-            : 'bg-surface-container border-outline-variant/40'
-        }`}
+        className={`p-3 rounded-lg border text-sm max-w-[92%] ${isUser
+          ? 'bg-secondary/10 border-secondary/25 text-on-surface'
+          : 'bg-surface-container border-outline-variant/40'
+          }`}
       >
         {msg.role === 'assistant' ? (
           <div className="markdown-body text-sm leading-relaxed">
@@ -42,23 +41,27 @@ function MessageBubble({ msg, children }: { msg: ChatMessage; children?: React.R
 }
 
 // ─── ClarifyCard — shown when missing_info is non-empty ───────────────────────
-function ClarifyCard({ intent }: { intent: import('../types').IntentObject }) {
-  const handleChip = (answer: string) => {
-    window.dispatchEvent(new CustomEvent('QUICK_ANSWER', { detail: answer }));
-  };
-
+function ClarifyCard({
+  intent,
+  onToggleChip,
+  selectedChips,
+}: {
+  intent: import('../types').IntentObject;
+  onToggleChip: (answer: string) => void;
+  selectedChips: string[];
+}) {
   return (
     <div className="mt-3 flex flex-col gap-2 border-t border-outline-variant/40 pt-3">
       {intent.missing_info.length > 0 && (
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-1.5 text-tertiary mb-0.5">
             <HelpCircle size={13} />
-            <span className="font-mono text-[10px] uppercase tracking-wider">Clarifying questions</span>
+            <span className="font-mono text-[10px] uppercase tracking-wider">Pick answers · then press Enter</span>
           </div>
           {intent.missing_info.map((q: any, i) => {
             const questionStr = typeof q === 'string' ? q : q.question;
             const suggestedAnswers = (typeof q === 'object' && Array.isArray(q.suggestedAnswers)) ? q.suggestedAnswers : [];
-            
+
             return (
               <div key={i} className="flex flex-col gap-1.5 p-2 rounded bg-tertiary/8 border border-tertiary/20">
                 <div className="flex gap-2 items-start text-xs text-on-surface">
@@ -67,15 +70,23 @@ function ClarifyCard({ intent }: { intent: import('../types').IntentObject }) {
                 </div>
                 {suggestedAnswers.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 pl-4">
-                    {suggestedAnswers.map((ans: string, j: number) => (
-                      <button
-                        key={j}
-                        onClick={() => handleChip(ans)}
-                        className="font-mono text-[10px] px-2 py-1 rounded border border-tertiary/40 bg-tertiary/10 text-tertiary hover:bg-tertiary/25 transition-colors cursor-pointer"
-                      >
-                        {ans}
-                      </button>
-                    ))}
+                    {suggestedAnswers.map((ans: string, j: number) => {
+                      const isSelected = selectedChips.includes(ans);
+                      return (
+                        <button
+                          key={j}
+                          type="button"
+                          onClick={() => onToggleChip(ans)}
+                          className={`font-mono text-[10px] px-2 py-1 rounded border transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'border-tertiary bg-tertiary/30 text-tertiary ring-1 ring-tertiary/50'
+                              : 'border-tertiary/40 bg-tertiary/8 text-tertiary/80 hover:bg-tertiary/20 hover:text-tertiary'
+                          }`}
+                        >
+                          {isSelected ? '✓ ' : ''}{ans}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -115,9 +126,8 @@ function ViolationRow({ v }: { v: RuleViolation }) {
   const isConflict = v.severity === 'conflict';
   return (
     <div
-      className={`flex gap-2 p-2 rounded items-start text-xs ${
-        isConflict ? 'text-error bg-error/10 border border-error/20' : 'text-tertiary bg-tertiary/10 border border-tertiary/20'
-      }`}
+      className={`flex gap-2 p-2 rounded items-start text-xs ${isConflict ? 'text-error bg-error/10 border border-error/20' : 'text-tertiary bg-tertiary/10 border border-tertiary/20'
+        }`}
     >
       {isConflict
         ? <AlertCircle size={13} className="mt-0.5 shrink-0" />
@@ -147,10 +157,10 @@ function ViolationRow({ v }: { v: RuleViolation }) {
 
 // ─── Tradeoff row ─────────────────────────────────────────────────────────────
 const TRADEOFF_META = [
-  { key: 'cost',        label: 'Cost',        Icon: DollarSign },
-  { key: 'portability', label: 'Portability',  Icon: Zap },
-  { key: 'complexity',  label: 'Complexity',   Icon: Layers },
-  { key: 'power',       label: 'Power',        Icon: Battery },
+  { key: 'cost', label: 'Cost', Icon: DollarSign },
+  { key: 'portability', label: 'Portability', Icon: Zap },
+  { key: 'complexity', label: 'Complexity', Icon: Layers },
+  { key: 'power', label: 'Power', Icon: Battery },
 ] as const;
 
 // ─── OptionCard — one of the two architecture proposals ───────────────────────
@@ -227,10 +237,10 @@ function ValidationWidget() {
   if (!validation) return null;
 
   const conflicts = validation.violations.filter(v => v.severity === 'conflict');
-  const warnings  = validation.violations.filter(v => v.severity === 'warning');
-  const approved  = ['PLAN_GENERATING', 'AWAITING_APPROVAL', 'APPROVED'].includes(pipelineState);
+  const warnings = validation.violations.filter(v => v.severity === 'warning');
+  const approved = ['PLAN_GENERATING', 'AWAITING_APPROVAL', 'APPROVED'].includes(pipelineState);
 
-  const hasIssues  = conflicts.length > 0 || warnings.length > 0;
+  const hasIssues = conflicts.length > 0 || warnings.length > 0;
   const canApprove = conflicts.length === 0 && (!hasIssues || acknowledged);
 
   return (
@@ -318,7 +328,7 @@ function ValidationWidget() {
 function PlanReviewWidget() {
   const { pipelineState, transitionTo, plan } = useCircuitStore();
   const isAwaitingApproval = pipelineState === 'AWAITING_APPROVAL';
-  const isApproved         = pipelineState === 'APPROVED';
+  const isApproved = pipelineState === 'APPROVED';
 
   if (!plan) return null;
 
@@ -335,12 +345,10 @@ function PlanReviewWidget() {
       {/* Milestone titles preview */}
       <div className="flex flex-col gap-1">
         {plan.milestones.map((m, i) => (
-          <div key={m.id} className={`flex items-center gap-2 text-xs ${
-            i === 0 ? 'text-secondary font-bold' : 'text-on-surface-variant'
-          }`}>
-            <span className={`font-mono text-[9px] w-5 shrink-0 ${
-              i === 0 ? 'text-secondary' : 'text-on-surface-variant'
-            }`}>M{i + 1}</span>
+          <div key={m.id} className={`flex items-center gap-2 text-xs ${i === 0 ? 'text-secondary font-bold' : 'text-on-surface-variant'
+            }`}>
+            <span className={`font-mono text-[9px] w-5 shrink-0 ${i === 0 ? 'text-secondary' : 'text-on-surface-variant'
+              }`}>M{i + 1}</span>
             <span className="truncate">{m.title}</span>
             {i === 0 && (
               <span className="font-mono text-[8px] px-1 py-0.5 rounded bg-secondary text-on-secondary uppercase tracking-wider shrink-0">Active</span>
@@ -407,22 +415,28 @@ function ErrorCard({ message }: { message: string }) {
 }
 
 // ─── Main AssistantContent ────────────────────────────────────────────────────
-export default function AssistantContent() {
+export default function AssistantContent({
+  onToggleChip,
+  selectedChips,
+}: {
+  onToggleChip: (answer: string) => void;
+  selectedChips: string[];
+}) {
   const { messages, options, selectedOptionId, setSelectedOptionId, intent, clarifyStage, isLoading, pipelineState, pipelineError } = useCircuitStore();
 
   return (
     <div className="flex flex-col gap-4">
       {messages.map((msg, i) => {
-        const isOptionsMsg    = msg.type === 'options' && options.length > 0;
-        const isClarifyMsg    = msg.type === 'clarify' && intent !== null;
+        const isOptionsMsg = msg.type === 'options' && options.length > 0;
+        const isClarifyMsg = msg.type === 'clarify' && intent !== null;
         const isValidationMsg = msg.type === 'validation';
-        const isErrorMsg      = msg.type === 'error';
-        const isPlanMsg       = msg.type === 'plan';
+        const isErrorMsg = msg.type === 'error';
+        const isPlanMsg = msg.type === 'plan';
 
         return (
           <MessageBubble key={i} msg={msg}>
             {/* Clarify card — visible until user answers */}
-            {isClarifyMsg && <ClarifyCard intent={intent!} />}
+            {isClarifyMsg && <ClarifyCard intent={intent!} onToggleChip={onToggleChip} selectedChips={selectedChips} />}
 
             {/* Option cards — shown when compare call returns */}
             {isOptionsMsg && (

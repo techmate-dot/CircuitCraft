@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Archive, Bot, Send, MoreHorizontal, RotateCcw, Shuffle, ArrowRight, GitCompare, AlertTriangle, AlertCircle, ChevronDown } from 'lucide-react';
+import { Archive, Bot, Send, MoreHorizontal, RotateCcw, Shuffle, ArrowRight, GitCompare, AlertTriangle, AlertCircle, ChevronDown, X } from 'lucide-react';
 import type { NavTab } from '../types';
 import AssistantContent from './AssistantContent';
 import { useCircuitStore } from '../store';
@@ -12,6 +12,7 @@ interface LeftPanelProps {
 
 export default function LeftPanel({ activeNav }: LeftPanelProps) {
   const [inputText, setInputText] = useState('');
+  const [selectedChips, setSelectedChips] = useState<string[]>([]);
   const [bomOpen, setBomOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const handleSubmitRef = useRef<((textOverride?: string) => void) | null>(null);
@@ -47,6 +48,12 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
     }
   }, [useCircuitStore.getState().messages.length]);
 
+  const handleToggleChip = (answer: string) => {
+    setSelectedChips(prev =>
+      prev.includes(answer) ? prev.filter(a => a !== answer) : [...prev, answer]
+    );
+  };
+
   // ── Event handlers for option selection and plan approval ─────────────────
   useEffect(() => {
     const handleSelectOption = async (e: Event) => {
@@ -58,7 +65,7 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
       setValidation(valResult);
 
       const conflicts = valResult.violations.filter(v => v.severity === 'conflict');
-      const warnings  = valResult.violations.filter(v => v.severity === 'warning');
+      const warnings = valResult.violations.filter(v => v.severity === 'warning');
 
       const issueLines = valResult.violations.length > 0
         ? `\n\n${valResult.violations.map(v => `**[${v.ruleId}]** ${v.message}`).join('\n\n')}`
@@ -121,41 +128,32 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
       } catch (e: any) {
         console.error('[plan] error:', e);
         transitionTo('ERROR', { stage: 'plan', message: e.message, retryable: true });
-        addMessage({ 
-          role: 'assistant', 
-          content: 'I ran into an issue generating your plan. Please double-check your API key and try again.', 
-          type: 'error' 
+        addMessage({
+          role: 'assistant',
+          content: 'I ran into an issue generating your plan. Please double-check your API key and try again.',
+          type: 'error'
         });
       }
     };
 
-    const handleQuickAnswer = (e: Event) => {
-      const answer = (e as CustomEvent<string>).detail;
-      if (!answer) return;
-      setInputText(prev => {
-        const combined = prev ? `${prev}, ${answer}` : answer;
-        setTimeout(() => handleSubmitRef.current?.(combined), 0);
-        return '';
-      });
-    };
-
     window.addEventListener('SELECT_OPTION', handleSelectOption);
     window.addEventListener('APPROVE_PLAN', handleApprovePlan);
-    window.addEventListener('QUICK_ANSWER', handleQuickAnswer);
     return () => {
       window.removeEventListener('SELECT_OPTION', handleSelectOption);
       window.removeEventListener('APPROVE_PLAN', handleApprovePlan);
-      window.removeEventListener('QUICK_ANSWER', handleQuickAnswer);
     };
   }, []);
 
   // ── Core submit handler — named pipeline state machine ────────────────────
   const handleSubmit = async (e?: React.FormEvent, textOverride?: string) => {
     if (e) e.preventDefault();
-    const text = (textOverride ?? inputText).trim();
+    const typed = (textOverride ?? inputText).trim();
+    // Combine any chip-selected answers with typed text into one message
+    const text = [...selectedChips, typed].filter(Boolean).join('. ');
     if (!text || isLoading) return;
 
     if (!textOverride) setInputText('');
+    setSelectedChips([]);
     addMessage({ role: 'user', content: text });
 
     const currentStage = clarifyStage;
@@ -282,9 +280,6 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
     }
   };
 
-  // Keep the ref current so the QUICK_ANSWER event listener always calls the latest closure
-  handleSubmitRef.current = (textOverride?: string) => handleSubmit(undefined, textOverride);
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -296,7 +291,7 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
     isLoading
       ? 'Thinking…'
       : clarifyStage === 'waiting_clarification'
-        ? 'Answer the clarifying question…'
+        ? selectedChips.length > 0 ? 'Add context or press Enter to send…' : 'Select answers above, or type here…'
         : approved
           ? 'Ask about milestone 1 or request changes…'
           : 'Describe your idea…';
@@ -336,17 +331,37 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
 
       {/* Scrollable content area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-panel-padding flex flex-col gap-lg">
-        <AssistantContent />
+        <AssistantContent onToggleChip={handleToggleChip} selectedChips={selectedChips} />
       </div>
 
       {/* Input area (assistant tab only) */}
       {activeNav === 'assistant' && (
         <div className="p-panel-padding border-t border-outline-variant bg-surface shrink-0">
           {/* Stage indicator */}
-          {clarifyStage === 'waiting_clarification' && (
+          {clarifyStage === 'waiting_clarification' && selectedChips.length === 0 && (
             <div className="mb-2 flex items-center gap-1.5 text-tertiary">
               <div className="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse" />
-              <span className="font-mono text-[9px] uppercase tracking-wider">Waiting for your answer</span>
+              <span className="font-mono text-[9px] uppercase tracking-wider">Click answers below or type</span>
+            </div>
+          )}
+          {/* Selected chip tags — visible while user is composing their clarify reply */}
+          {selectedChips.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {selectedChips.map((chip, i) => (
+                <span
+                  key={i}
+                  className="flex items-center gap-1 font-mono text-[10px] px-2 py-1 rounded-full bg-tertiary/15 border border-tertiary/40 text-tertiary"
+                >
+                  {chip}
+                  <button
+                    type="button"
+                    onClick={() => handleToggleChip(chip)}
+                    className="text-tertiary/60 hover:text-tertiary ml-0.5 leading-none"
+                  >
+                    <X size={10} />
+                  </button>
+                </span>
+              ))}
             </div>
           )}
           {clarifyStage === 'options_ready' && (
@@ -367,7 +382,7 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
             />
             <button
               type="submit"
-              disabled={inputDisabled || !inputText.trim()}
+              disabled={inputDisabled || (!inputText.trim() && selectedChips.length === 0)}
               className="absolute right-2 text-on-surface-variant hover:text-secondary disabled:opacity-40 transition-colors"
             >
               <Send size={16} />
@@ -474,9 +489,9 @@ function WhatIfSandbox() {
   // Get only peripherals from the current option (exclude microcontroller)
   const activePeripherals = selected
     ? selected.components.filter((c) => {
-        const spec = findSpec(c);
-        return spec && !spec.is_microcontroller;
-      })
+      const spec = findSpec(c);
+      return spec && !spec.is_microcontroller;
+    })
     : [];
 
   // Get all spec peripherals (excluding microcontrollers)
@@ -581,7 +596,7 @@ function WhatIfSandbox() {
             {/* Validation Comparison */}
             <div className="flex flex-col gap-1.5 p-2 rounded bg-surface border border-outline-variant">
               <span className="font-mono text-[9px] uppercase tracking-wide text-on-surface-variant">Validation Impact</span>
-              
+
               {/* Before Validation */}
               <div className="flex flex-col gap-1 text-[11px] border-b border-outline-variant/30 pb-1.5">
                 <div className="flex items-center justify-between">
