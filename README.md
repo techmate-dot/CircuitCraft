@@ -2,8 +2,6 @@
 
 <img src="assets/circuitcraft_dark_ui_logo.png" alt="CircuitCraft" width="420"/>
 
-<h1>CircuitCraft</h1>
-
 <p><em>AI-powered hardware planning for Arduino & ESP32</em></p>
 
 <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=16&pause=1000&color=D4AF37&center=true&vCenter=true&width=500&lines=Plan+your+circuit+in+plain+English;Validate+before+you+build;Generate+Arduino+code+live" alt="Typing SVG" />
