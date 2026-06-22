@@ -730,7 +730,7 @@ async function callResolveConflicts(
 async function startServer() {
   const app = express();
   app.use(express.json());
-  const PORT = 3000;
+  const PORT = parseInt(process.env.PORT ?? '3000', 10);
 
   const resolveProvider = (req: express.Request): string =>
     (req.headers['x-ai-provider'] as string | undefined) ??
