@@ -2,7 +2,10 @@ import { Undo, Redo, ZoomIn, ZoomOut, PlusCircle, Activity, ShieldCheck, ShieldA
 import type { CenterView } from '../types';
 import { useCircuitStore } from '../store';
 import { resolvePinAssignments } from '../lib/pinMapper';
-import ReactFlow, { Background, Controls, useReactFlow, ReactFlowProvider } from 'reactflow';
+import ReactFlow, {
+  Background, Controls, useReactFlow, ReactFlowProvider,
+  Handle, Position, MiniMap,
+} from 'reactflow';
 import 'reactflow/dist/style.css';
 import { useRef, useEffect, useState, useCallback } from 'react';
 import * as Blockly from 'blockly';
@@ -1003,6 +1006,121 @@ function resolveSymbol(compName: string, category: string, props: SymbolProps): 
   return (SYMBOL_RENDERERS[catMap[category] ?? '_sensor'])(props);
 }
 
+// ── ReactFlow custom node: microcontroller board ──────────────────────────────
+// Defined at module level so React doesn't recreate the type on every render.
+function BoardSchNode({ data }: { data: any }) {
+  const HEADER_H = 54; // px — space for board name + sub-label
+  const ROW_H    = 30; // px — height of each GPIO pin row
+
+  return (
+    <div style={{
+      background: '#0c0d10', border: '1.5px solid #d4af37',
+      borderRadius: 8, width: 164, position: 'relative',
+      fontFamily: 'monospace',
+    }}>
+      {/* Header */}
+      <div style={{ textAlign: 'center', padding: '10px 12px 8px', borderBottom: '1px solid #d4af3728' }}>
+        <div style={{ color: '#d4af37', fontWeight: 700, fontSize: 12 }}>{data.boardName}</div>
+        <div style={{ color: '#55546a', fontSize: 8, marginTop: 2 }}>U1 · {data.voltage}V</div>
+      </div>
+
+      {/* GPIO pin rows */}
+      {(data.usedPins as Array<{ name: string; color: string; pinType: string }>).map((pin, i) => (
+        <div key={pin.name} style={{
+          height: ROW_H, display: 'flex', alignItems: 'center',
+          justifyContent: 'flex-end', paddingRight: 14, position: 'relative',
+          borderBottom: '1px solid #ffffff08',
+        }}>
+          <span style={{ color: '#7a7990', fontSize: 8 }}>{pin.name}</span>
+          <span style={{ color: '#45445a', fontSize: 7, marginLeft: 4 }}>
+            {pin.pinType?.toUpperCase()}
+          </span>
+          {/* Handle sits flush with the right edge */}
+          <Handle
+            type="source"
+            position={Position.Right}
+            id={pin.name}
+            style={{
+              background: pin.color, width: 10, height: 10,
+              border: '2px solid #0c0d10',
+              top: HEADER_H + i * ROW_H + ROW_H / 2,
+            }}
+          />
+        </div>
+      ))}
+
+      {/* GND footer */}
+      <div style={{ padding: '6px 14px 8px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6, borderTop: '1px solid #ffffff08' }}>
+        <span style={{ color: '#55546a', fontSize: 8 }}>GND</span>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="GND"
+          style={{
+            background: '#888', width: 8, height: 8,
+            border: '2px solid #0c0d10',
+            top: HEADER_H + (data.usedPins?.length ?? 0) * ROW_H + 16,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── ReactFlow custom node: peripheral component ───────────────────────────────
+function CompSchNode({ data }: { data: any }) {
+  const spec = findSpec(data.compName as string);
+  const category = spec?.category ?? 'Sensors';
+  const color = data.color as string;
+
+  return (
+    <div
+      onClick={data.onSelect}
+      style={{
+        background: '#0c0d10',
+        border: `1.5px solid ${data.violated ? '#ffb4ab' : color}`,
+        borderRadius: 8, width: 188, padding: '8px 12px',
+        cursor: 'pointer', position: 'relative',
+        boxShadow: data.selected ? `0 0 0 2px ${color}35` : undefined,
+      }}
+    >
+      {/* Signal input handle — left edge centre */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="signal"
+        style={{ background: color, width: 10, height: 10, border: '2px solid #0c0d10' }}
+      />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {/* Schematic symbol in a 44×44 SVG */}
+        <svg width={44} height={44} style={{ flexShrink: 0, overflow: 'visible' }}>
+          {resolveSymbol(data.compName, category, { cx: 22, cy: 22, color })}
+        </svg>
+
+        {/* Labels */}
+        <div style={{ minWidth: 0 }}>
+          <div style={{ color: '#e0dde4', fontWeight: 600, fontSize: 11, fontFamily: 'sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {(data.compName as string).replace(/\s*\([^)]*\)/g, '')}
+          </div>
+          <div style={{ color: data.violated ? '#ffb4ab' : color, fontSize: 8, fontFamily: 'monospace', marginTop: 2 }}>
+            {data.violated ? `⚠ RESERVED · ${data.pin}` : `${(data.role as string).toUpperCase()} · ${data.pin || '—'}`}
+          </div>
+          <div style={{ color: '#45445a', fontSize: 7, fontFamily: 'monospace', marginTop: 1 }}>
+            {spec ? `${spec.voltage}V` : ''}{data.pinType ? ` · ${(data.pinType as string).toUpperCase()}` : ''}
+          </div>
+        </div>
+      </div>
+
+      {/* Edit pencil hint top-right */}
+      <div style={{ position: 'absolute', top: 5, right: 7, fontSize: 9, color: '#c7c6ca', opacity: 0.3 }}>✎</div>
+    </div>
+  );
+}
+
+// Defined outside component to prevent React recreating node types on every render
+const SCH_NODE_TYPES = { board: BoardSchNode, component: CompSchNode };
+
 function SchematicCanvas() {
   const { options, selectedOptionId, validation, swapSimulation } = useCircuitStore();
   const selectedOption = swapSimulation.active && swapSimulation.simulatedOption
@@ -1104,30 +1222,80 @@ function SchematicCanvas() {
     ? board.pins.filter(p => p.types.includes(selectedBase.pinType as any) || p.reserved)
     : [];
 
-  // ── Layout constants ────────────────────────────────────────────────────────
-  // Target total SVG width ≈ 530px to fit comfortably inside the center panel.
-  const ROW_H    = 88;   // vertical spacing between component rows
-  const BRD_X    = 20;   // board rect left edge
-  const BRD_W    = 168;  // board rect width
-  const BRD_X2   = BRD_X + BRD_W;  // right edge = 188 — pins exit here
-  const WIRE_LEN = 72;   // straight horizontal wire from board to component
-  const CMP_X    = BRD_X2 + WIRE_LEN;  // component box left = 260
-  const CMP_SYM  = 52;   // component box size (both dimensions)
-  const CMP_CX   = CMP_X + CMP_SYM / 2; // symbol centre x = 286
-  const LBL_X    = CMP_X + CMP_SYM + 14; // label column start = 326
-  const SVG_W    = LBL_X + 206;          // total width = 532
+  const getWireColor = (a: { pin: string; role: string; component: string }) =>
+    a.pin === 'UNASSIGNED' || violatedComps.has(a.component)
+      ? '#ffb4ab'
+      : (SCHEMATIC_ROLE_COLOR[a.role] ?? '#4ae176');
 
-  const BRD_TOP  = 48;
-  const BRD_PAD_TOP = 52;  // space inside board above first pin (for name labels)
-  const BRD_PAD_BOT = 22;
-  const boardH   = Math.max(140, assignments.length * ROW_H + BRD_PAD_TOP + BRD_PAD_BOT);
-  const svgH     = BRD_TOP + boardH + 48;
+  // ── Build ReactFlow nodes ──────────────────────────────────────────────────
+  const rfNodes = [
+    {
+      id: 'board',
+      type: 'board',
+      position: { x: 40, y: 40 },
+      draggable: true,
+      data: {
+        boardName,
+        voltage: boardVoltage,
+        usedPins: assignments.map(a => ({
+          name: a.pin === 'UNASSIGNED' ? '—' : a.pin,
+          color: getWireColor(a),
+          pinType: a.pinType,
+        })),
+      },
+    },
+    ...assignments.map((a, i) => ({
+      id: `comp-${i}`,
+      type: 'component',
+      position: { x: 440, y: i * 160 + 40 },
+      draggable: true,
+      data: {
+        compName: a.component,
+        pin: a.pin,
+        role: a.role,
+        pinType: a.pinType,
+        color: getWireColor(a),
+        violated: violatedComps.has(a.component),
+        selected: selectedComp === a.component,
+        onSelect: () => {
+          const isSel = selectedComp === a.component;
+          setSelectedComp(isSel ? null : a.component);
+          if (!isSel) setAiExplanation(null);
+        },
+      },
+    })),
+  ];
 
-  // y-centre of row i
-  const rowY = (i: number) => BRD_TOP + BRD_PAD_TOP + i * ROW_H + ROW_H / 2;
+  const rfEdges = assignments.map((a, i) => {
+    const wc = getWireColor(a);
+    const unassigned = a.pin === 'UNASSIGNED';
+    return {
+      id: `e-${i}`,
+      source: 'board',
+      sourceHandle: unassigned ? '—' : a.pin,
+      target: `comp-${i}`,
+      targetHandle: 'signal',
+      type: 'smoothstep',
+      style: {
+        stroke: wc,
+        strokeWidth: violatedComps.has(a.component) ? 2.5 : 1.6,
+        strokeDasharray: unassigned ? '6 3' : undefined,
+        opacity: 0.85,
+      },
+      label: a.pinType.toUpperCase(),
+      labelStyle: { fontSize: 7, fontFamily: 'monospace', fill: wc, opacity: 0.7 },
+      labelBgStyle: { fill: '#0c0d10', fillOpacity: 0.85 },
+      labelBgPadding: [2, 4] as [number, number],
+    };
+  });
 
-  // Reference designator prefix by category
-  const refPfx: Record<string, string> = { Sensors: 'U', Actuators: 'D', Control: 'IC', Power: 'PS' };
+  const handleConnect = (connection: any) => {
+    const idx = parseInt((connection.target as string).replace('comp-', ''), 10);
+    const comp = assignments[idx];
+    if (comp && connection.sourceHandle && connection.sourceHandle !== '—') {
+      handlePinChange(comp.component, connection.sourceHandle);
+    }
+  };
 
   return (
     <div className="flex-1 schematic-bg w-full h-full relative flex flex-col overflow-hidden">
@@ -1135,7 +1303,7 @@ function SchematicCanvas() {
       <div className="shrink-0 z-10 bg-surface/95 backdrop-blur border-b border-outline-variant/40">
         <div className="flex items-center justify-between px-4 py-2">
           <span className="font-mono text-[10px] uppercase tracking-wider text-on-surface-variant">
-            Generated Schematic · {boardName} · {assignments.length} component{assignments.length === 1 ? '' : 's'}
+            Schematic · {boardName} · {assignments.length} component{assignments.length === 1 ? '' : 's'}
           </span>
           <div className="flex items-center gap-2">
             {violatedComps.size > 0 && (
@@ -1148,7 +1316,7 @@ function SchematicCanvas() {
           </div>
         </div>
 
-        {/* ── Inline pin editor — appears when a component is selected ── */}
+        {/* ── Inline pin editor — appears when a component node is clicked ── */}
         {selectedComp && selectedAssignment && (
           <div className="px-4 pb-2 flex flex-col gap-1.5 border-t border-outline-variant/30">
             <div className="flex items-center justify-between">
@@ -1203,137 +1371,41 @@ function SchematicCanvas() {
         )}
       </div>
 
-      {/* ── Scrollable SVG canvas ── */}
-      <div className="flex-1 overflow-auto">
-        <svg width={SVG_W} height={svgH} xmlns="http://www.w3.org/2000/svg">
+      {/* ── ReactFlow node canvas ── */}
+      <ReactFlowProvider>
+        <div className="flex-1 w-full h-full">
+          <ReactFlow
+            nodes={rfNodes}
+            edges={rfEdges}
+            nodeTypes={SCH_NODE_TYPES}
+            onConnect={handleConnect}
+            fitView
+            fitViewOptions={{ padding: 0.35 }}
+            panOnDrag
+            zoomOnScroll
+            zoomOnPinch
+            panOnScroll={false}
+            minZoom={0.15}
+            maxZoom={2}
+          >
+            <Background color="oklch(var(--color-outline-variant))" gap={24} />
+            <Controls position="bottom-left" style={{ marginBottom: 8, marginLeft: 8 }} />
+            <MiniMap
+              position="bottom-right"
+              style={{ marginBottom: 8, marginRight: 8 }}
+              pannable
+              zoomable
+              nodeColor={(n: any) => n.type === 'board' ? '#d4af37' : (n.data?.color ?? '#4ae176')}
+            />
+          </ReactFlow>
+        </div>
+      </ReactFlowProvider>
 
-          {/* ── Microcontroller IC block ── */}
-          <rect
-            x={BRD_X} y={BRD_TOP}
-            width={BRD_W} height={boardH}
-            rx={8} fill="#0c0d10" stroke="#d4af37" strokeWidth={1.5}
-          />
-          {/* Board name + ref */}
-          <text x={BRD_X + BRD_W / 2} y={BRD_TOP + 20} textAnchor="middle" fill="#d4af37"
-            style={{ fontSize: 12, fontWeight: 700, fontFamily: 'monospace' }}>{boardName}</text>
-          <text x={BRD_X + BRD_W / 2} y={BRD_TOP + 35} textAnchor="middle" fill="#6a6880"
-            style={{ fontSize: 8.5, fontFamily: 'monospace' }}>U1 · {boardVoltage}V · {assignments.length} pin{assignments.length !== 1 ? 's' : ''}</text>
-          {/* Decorative left-side IC legs */}
-          {Array.from({ length: Math.min(8, assignments.length + 3) }, (_, k) => (
-            <line key={`leg-${k}`}
-              x1={BRD_X - 9} y1={BRD_TOP + 58 + k * 17}
-              x2={BRD_X}     y2={BRD_TOP + 58 + k * 17}
-              stroke="#d4af37" strokeWidth={1} opacity={0.22} />
-          ))}
-          {/* GND and VCC indicators at bottom/top of board */}
-          <circle cx={BRD_X2} cy={BRD_TOP + boardH - 16} r={3} fill="#888" opacity={0.55} />
-          <text x={BRD_X2 - 8} y={BRD_TOP + boardH - 12}
-            textAnchor="end" fill="#888" style={{ fontSize: 7.5, fontFamily: 'monospace' }} opacity={0.6}>GND</text>
-          <circle cx={BRD_X2} cy={BRD_TOP + 16} r={3} fill="#e05252" opacity={0.5} />
-          <text x={BRD_X2 - 8} y={BRD_TOP + 12}
-            textAnchor="end" fill="#e05252" style={{ fontSize: 7.5, fontFamily: 'monospace' }} opacity={0.6}>{boardVoltage}V</text>
-
-          {/* ── Per-component rows ── */}
-          {assignments.map((a, i) => {
-            const y         = rowY(i);
-            const unassigned = a.pin === 'UNASSIGNED';
-            const isViolated = violatedComps.has(a.component);
-            const isSelected = selectedComp === a.component;
-            const wireColor  = unassigned || isViolated
-              ? '#ffb4ab'
-              : (SCHEMATIC_ROLE_COLOR[a.role] ?? '#4ae176');
-            const spec     = findSpec(a.component);
-            const category = spec?.category ?? 'Sensors';
-            const refDes   = `${refPfx[category] ?? 'X'}${i + 1}`;
-
-            return (
-              <g key={i}
-                onClick={() => { setSelectedComp(isSelected ? null : a.component); if (!isSelected) setAiExplanation(null); }}
-                style={{ cursor: 'pointer' }}>
-
-                {/* Selection / violation highlight */}
-                {(isSelected || isViolated) && (
-                  <rect
-                    x={CMP_X - 5} y={y - CMP_SYM / 2 - 5}
-                    width={CMP_SYM + 10} height={CMP_SYM + 10}
-                    rx={10}
-                    fill={isViolated ? '#ffb4ab10' : '#d4af3710'}
-                    stroke={isViolated ? '#ffb4ab' : '#d4af37'}
-                    strokeWidth={1.5}
-                    strokeDasharray={isViolated ? undefined : '5 3'}
-                  />
-                )}
-
-                {/* Board output pin dot + label (inside board, right-aligned) */}
-                <circle cx={BRD_X2} cy={y} r={3.5} fill={wireColor} opacity={0.9} />
-                <text x={BRD_X2 - 10} y={y + 4} textAnchor="end"
-                  fill={isViolated ? '#ffb4ab' : '#8a8a9a'}
-                  style={{ fontSize: 8.5, fontFamily: 'monospace', fontWeight: isViolated ? 700 : 400 }}>
-                  {unassigned ? '—' : a.pin}
-                </text>
-
-                {/* Straight signal wire: board right edge → component left edge */}
-                <line
-                  x1={BRD_X2} y1={y} x2={CMP_X} y2={y}
-                  stroke={wireColor} strokeWidth={isViolated ? 2.5 : 1.6} fill="none"
-                  strokeDasharray={unassigned ? '6 3' : undefined}
-                  opacity={isViolated ? 1 : 0.85}
-                />
-                {/* Pin type label centred above wire */}
-                <text x={BRD_X2 + WIRE_LEN / 2} y={y - 7} textAnchor="middle"
-                  fill={wireColor} style={{ fontSize: 7, fontFamily: 'monospace' }} opacity={0.7}>
-                  {a.pinType.toUpperCase()}
-                </text>
-
-                {/* Component symbol box */}
-                <rect
-                  x={CMP_X} y={y - CMP_SYM / 2}
-                  width={CMP_SYM} height={CMP_SYM}
-                  rx={7} fill="#0c0d10"
-                  stroke={wireColor} strokeWidth={isSelected ? 2.2 : 1.2}
-                />
-                {/* Wire-to-box connection dot */}
-                <circle cx={CMP_X} cy={y} r={2.5} fill={wireColor} opacity={0.85} />
-
-                {/* Schematic symbol centred in the box */}
-                {resolveSymbol(a.component, category, { cx: CMP_CX, cy: y, color: wireColor })}
-
-                {/* Labels: name / role·pin / refdes·voltage */}
-                <text x={LBL_X} y={y - 7} fill="#e0dde4"
-                  style={{ fontSize: 11, fontWeight: 600, fontFamily: 'sans-serif' }}>
-                  {a.component.replace(/\s*\([^)]*\)/g, '')}
-                </text>
-                <text x={LBL_X} y={y + 8} fill={wireColor}
-                  style={{ fontSize: 8.5, fontFamily: 'monospace' }}>
-                  {isViolated
-                    ? `⚠ RESERVED · ${a.pin}`
-                    : `${a.role.toUpperCase()} · ${unassigned ? 'UNASSIGNED' : a.pin}`}
-                </text>
-                <text x={LBL_X} y={y + 21} fill="#56556a"
-                  style={{ fontSize: 7.5, fontFamily: 'monospace' }}>
-                  {refDes}{spec ? ` · ${spec.voltage}V` : ''}
-                </text>
-
-                {/* Edit pencil hint */}
-                <text x={CMP_X + CMP_SYM - 4} y={y - CMP_SYM / 2 + 13}
-                  textAnchor="end" fill="#c7c6ca" style={{ fontSize: 9 }} opacity={0.35}>✎</text>
-              </g>
-            );
-          })}
-        </svg>
-
-        {assignments.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center text-on-surface-variant font-mono text-[11px] uppercase tracking-wider opacity-60 pointer-events-none">
-            No peripheral components to wire — add components to the architecture
-          </div>
-        )}
-      </div>
-
-      {/* Click hint */}
+      {/* Hint */}
       {assignments.length > 0 && !selectedComp && (
-        <div className="absolute bottom-3 right-3 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider text-on-surface-variant opacity-50 pointer-events-none">
+        <div className="absolute bottom-10 right-3 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider text-on-surface-variant opacity-40 pointer-events-none">
           <Pencil size={9} />
-          Click a component to edit its pin
+          Click a component to edit pin · drag from board to reassign
         </div>
       )}
     </div>

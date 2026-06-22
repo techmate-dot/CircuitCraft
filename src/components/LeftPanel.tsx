@@ -184,6 +184,18 @@ export default function LeftPanel({ activeNav }: LeftPanelProps) {
     setSelectedChips([]);
     addMessage({ role: 'user', content: text });
 
+    // If the user is just greeting or the message has nothing to do with a project,
+    // reply directly without burning an API call.
+    const greetingPattern = /^(hi|hello|hey|howdy|hiya|sup|yo|good\s+(morning|afternoon|evening)|what'?s\s+up|greetings)[\s!?.]*$/i;
+    if (greetingPattern.test(text.trim()) && clarifyStage === 'idle') {
+      addMessage({
+        role: 'assistant',
+        content: "Hey! What are you trying to build? Describe your idea in plain English and I'll help you plan it.",
+        type: 'text',
+      });
+      return;
+    }
+
     const currentStage = clarifyStage;
 
     try {
