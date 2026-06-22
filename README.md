@@ -18,7 +18,7 @@
 
 ---
 
-**CircuitCraft** is an AI-powered hardware planning and development environment for Arduino and ESP32 projects. It guides you from a plain-language idea to a validated circuit plan and working Arduino code — without the risk of frying your board. Try it out here[CircuitCraft](https://circuitcraft-0fub.onrender.com/)
+**CircuitCraft** is an AI-powered hardware planning and development environment for Arduino and ESP32 projects. It guides you from a plain-language idea to a validated circuit plan and working Arduino code — without the risk of frying your board. Try it out here [CircuitCraft](https://circuitcraft-0fub.onrender.com/)
 
 ---
 
